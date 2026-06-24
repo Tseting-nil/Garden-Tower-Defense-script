@@ -2374,7 +2374,6 @@ local function generateScript(mode)
 	table.insert(outer, "local GTD = getgenv().GTD")
 	table.insert(outer, "if not GTD or not GTD.ExecuteQueue then")
 	table.insert(outer, string.format('\tloadstring(game:HttpGet("%s"))()', GTD_API_URL))
-	table.insert(outer, '    --loadstring(game:HttpGet("http://127.0.0.1:8000/GTD_API_TEST"))()')
 	table.insert(outer, "    GTD = getgenv().GTD")
 	table.insert(outer, "end")
 	table.insert(outer, "")
@@ -3375,66 +3374,74 @@ local function InitTracker()
 		-- 註：自動升級（ToggleAutoUpgrade）不再單獨記錄為 op；其升級效果由 StartLevelWatcher
 		-- 監看 .Level 增量收成普通 upgrade，重播時即為一連串 GTD.AddUpgradeTower。
 
-		-- Hook（花園塔防：全部走 InvokeServer，無 FireServer 分支）
+		-- Hook
 		local oldNamecall
-		oldNamecall = hookmetamethod(
-			game,
-			"__namecall",
-			newcclosure(function(self, ...)
-				local method = string.lower(getnamecallmethod())
-				local args = {
-					...,
-				}
-
-				-- 關鍵：用 table.pack/unpack 原樣保留並轉發「全部」回傳值。
-				-- 花園塔防 UpgradeUnit/PlaceUnit 等會回多個值，遊戲 UI 要拿去算等級/價格；
-				-- 只接第一個會讓 SetLevel/updateUpgradeButtonColor 拿到 nil → 報錯、UI 不更新。
-				if method == "invokeserver" then
-					if self == PlaceTowerRemote then
-						local placeAction
-						if ScriptSettings.CostMode then
-							placeAction = CostTracker.PushAction(nil)
-						end
-						local res = table.pack(oldNamecall(self, ...))
-						-- PlaceUnit 不回傳 id；成敗由 handler 綁定 Entities 後自行決定是否 CancelAction
-						NamecallHandlers.InvokeServer.PlaceTower(self, args, res[1], placeAction)
-						return table.unpack(res, 1, res.n)
+		local hookFunc = function(self, ...)
+			local method = getnamecallmethod()
+			if method == "InvokeServer" or method == "invokeserver" then
+				if self == PlaceTowerRemote then
+					local placeAction
+					if ScriptSettings.CostMode then
+						placeAction = CostTracker.PushAction(nil)
 					end
-					-- UpgradeUnit：不攔截記錄（升級改由 .Level 監看器捕捉）；
-					-- 原生 fall through 到底部 return oldNamecall(self, ...) 完整轉發全部回傳值。
-					if self == SellTowerRemote then
-						local res = table.pack(oldNamecall(self, ...))
-						NamecallHandlers.InvokeServer.SellTower(self, args, res[1])
-						return table.unpack(res, 1, res.n)
-					end
-					-- ToggleAutoUpgrade：不攔截記錄（自動升級效果由 .Level 監看器收成普通升級）。
-					if TowerAbilityRemote and self == TowerAbilityRemote then
-						local res = table.pack(oldNamecall(self, ...))
-						NamecallHandlers.InvokeServer.TowerAbility(self, args, res[1])
-						return table.unpack(res, 1, res.n)
-					end
-					if self == SkipWaveRemote then
-						local res = table.pack(oldNamecall(self, ...))
-						NamecallHandlers.InvokeServer.SkipWave(self, args, res[1])
-						return table.unpack(res, 1, res.n)
-					end
-					if self == GameSpeedRemote then
-						local res = table.pack(oldNamecall(self, ...))
-						NamecallHandlers.InvokeServer.GameSpeed(self, args, res[1])
-						return table.unpack(res, 1, res.n)
-					end
-					if self == GamemodeRemote then
-						local res = table.pack(oldNamecall(self, ...))
-						NamecallHandlers.InvokeServer.Difficulty(self, args, res[1])
-						return table.unpack(res, 1, res.n)
-					end
+					local res = table.pack(oldNamecall(self, ...))
+					local args = { ... }
+					NamecallHandlers.InvokeServer.PlaceTower(self, args, res[1], placeAction)
+					return table.unpack(res, 1, res.n)
+				elseif self == SellTowerRemote then
+					local res = table.pack(oldNamecall(self, ...))
+					local args = { ... }
+					NamecallHandlers.InvokeServer.SellTower(self, args, res[1])
+					return table.unpack(res, 1, res.n)
+				elseif TowerAbilityRemote and self == TowerAbilityRemote then
+					local res = table.pack(oldNamecall(self, ...))
+					local args = { ... }
+					NamecallHandlers.InvokeServer.TowerAbility(self, args, res[1])
+					return table.unpack(res, 1, res.n)
+				elseif self == SkipWaveRemote then
+					local res = table.pack(oldNamecall(self, ...))
+					local args = { ... }
+					NamecallHandlers.InvokeServer.SkipWave(self, args, res[1])
+					return table.unpack(res, 1, res.n)
+				elseif self == GameSpeedRemote then
+					local res = table.pack(oldNamecall(self, ...))
+					local args = { ... }
+					NamecallHandlers.InvokeServer.GameSpeed(self, args, res[1])
+					return table.unpack(res, 1, res.n)
+				elseif self == GamemodeRemote then
+					local res = table.pack(oldNamecall(self, ...))
+					local args = { ... }
+					NamecallHandlers.InvokeServer.Difficulty(self, args, res[1])
+					return table.unpack(res, 1, res.n)
 				end
+			end
 
-				return oldNamecall(self, ...)
-			end)
-		)
+			return oldNamecall(self, ...)
+		end
 
-		print("[GTD Tracker] hookmetamethod OK ")
+		-- 針對手機端（Delta/codex/Arceus/Vega）製作hook。
+		local finalHook = hookFunc
+		local executorName = "Unknown"
+		local isMobileExecutor = false
+
+		if identifyexecutor then
+			local ok, name = pcall(identifyexecutor)
+			if ok and type(name) == "string" then
+				executorName = name
+				local lowerName = name:lower()
+				if lowerName:find("delta") or lowerName:find("codex") or lowerName:find("arceus") or lowerName:find("vega") then
+					isMobileExecutor = true
+				end
+			end
+		end
+
+		if not isMobileExecutor and newcclosure then
+			finalHook = newcclosure(hookFunc)
+		end
+
+		oldNamecall = hookmetamethod(game, "__namecall", finalHook)
+
+		print(string.format("[GTD Tracker] __namecall Hook OK | Executor: %s | MobilePath: %s", executorName, tostring(isMobileExecutor)))
 
 		-- === 建立塔能力索引（花園塔防：能力資料內嵌於 GTD_ABILITY_DATA，免 require 全部單位設定，避免 WSA 閃退）===
 		local abiCount = 0
