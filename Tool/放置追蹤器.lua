@@ -157,19 +157,26 @@ local SCRIPT_SAVE_PATH = "Tsetingnil_script/GTD/Script"
 local GTD_API_URL = "https://raw.githubusercontent.com/Tseting-nil/Garden-Tower-Defense-script/refs/heads/main/%E5%AF%86%E9%91%B0%E7%B3%BB%E7%B5%B1.lua"
 
 -- === 語言設定 ===
-local currentLang = "en"
+local currentLang = "zh"
 do
-	local API_VAR_PATH = "Tsetingnil_script/GTD/API_VAR.json"
+	local API_VAR_PATH = "Tsetingnil_script/keysystem.json"
 	pcall(function()
 		if isfile and isfile(API_VAR_PATH) and readfile then
 			local raw = readfile(API_VAR_PATH)
 			if raw and raw ~= "" then
 				local ok, data = pcall(HttpService.JSONDecode, HttpService, raw)
-				if ok and type(data) == "table" and data.language then
-					local lang = tostring(data.language):upper()
-					if lang == "CHINESE" then
+				local scriptLang = nil
+				if ok and type(data) == "table" then
+					scriptLang = data.script_language or data.language
+				else
+					scriptLang = raw:match('"script_language"%s*:%s*"([^"]+)"') or raw:match('"language"%s*:%s*"([^"]+)"')
+				end
+				
+				if scriptLang then
+					local sl = tostring(scriptLang):lower()
+					if sl:find("chinese") or sl:find("zh") then
 						currentLang = "zh"
-					elseif lang == "ENGLISH" then
+					elseif sl:find("english") or sl:find("en") then
 						currentLang = "en"
 					end
 				end
@@ -203,12 +210,6 @@ local Lang = {
 		lblTrackerOp = "🛠️ 追蹤器操作",
 		lblScriptParam = "📝 腳本參數",
 		lblAutoReplay = "自動重播 (AutoReplay)",
-		lblRecordMutation = "記錄全部突變附魔",
-		lblRecordMutationDesc = "開啟後腳本將記錄塔的所有附魔/突變（停用時僅記錄閃亮塔）",
-		lblCostMode = "成本版錄製（無時間）",
-		lblCostModeDesc = "開啟後生成腳本用消耗($)當閘門、錢夠才動作；對收入/難度差異更穩，適合掛機重播",
-		lblSkipPhase2Load = "停用 Phase2 無名後綴搜尋",
-		lblSkipPhase2LoadDesc = "開啟後切到第二張圖時，無指定名稱不會自動後綴搜尋舊外部 Phase2（指定名稱仍會載入）；錄新 Phase2 時開，錄完關掉",
 		lblFileName = "輸入腳本名稱:",
 		phFileName = "輸入腳本名稱...",
 		infoFmt = "地圖: %s\n難易度: %s\n效果: %s\n自動跳波: %s",
@@ -218,7 +219,6 @@ local Lang = {
 		lblPhase2Name = "指定加載名稱（前綴）",
 		logNoOps = "⚠️ 沒有可生成的操作記錄",
 		logSaved = "✅ 已儲存: %s",
-		logSavedPhase2 = "✅ 已儲存 Phase2: %s",
 		logSaveFailed = "❌ 儲存失敗: %s",
 		logNoScripts = "尚無已儲存的腳本",
 		logCopied = "📋 已複製: %s",
@@ -231,26 +231,18 @@ local Lang = {
 		logReset = "🔄 追蹤器已重置",
 		logTowerListHdr = "=== 塔追蹤清單 ===",
 		logNoRecord = "  (無記錄)",
-		logReady = "⏳ Ready 已送出，請選擇難易度...",
 		logSkipWave = "跳過關卡  +%.1fs",
 		logSpeedSet = "速度設定: %dx  +%.1fs",
 		logGameSetting = "設定 %s = %s  +%.1fs",
-		lblGameSettings = "⚙️ 遊戲設定",
-		lblAutoSkipWave = "自動跳波 (AutoSkipWave)",
 		logDiffStart = "難易度選擇: %s → 開始計時",
-		logDiffUpdate = "難易度更新: %s",
-		logModAdd = "效果套用: %s",
-		logModRemove = "效果移除: %s，當前: %s",
 		logWaitReady = "⏳ 等待遊戲啟動 (GameRunning)...",
 		logFlow = "📋 流程：所有地圖 = GameRunning 觸發計時開始",
-		logSpecialMapReady = "🗺️ 檢測到特殊地圖 [%s]，Ready 後開始計時",
 		logGameEnd = "🏁 遊戲結束  總時間: %dm %ds (%.1fs)",
 		logStarted = "🎉 追蹤系統已啟動！地圖: %s  難易度: %s  效果: %s",
 		logInitFailed = "❌ 追蹤系統初始化失敗（可能不在遊戲中）",
 		logPlaceTower = "放置塔 #%d: %s  +%.1fs",
 		logPlaceFailed = "⚠️ 放置塔失敗: %s (伺服器拒絕)",
-		logUpgrade = "升級塔 #%d: %s  +%.1fs",
-		logUpgradeUnknown = "升級塔 [id:%s] (未追蹤)  +%.1fs",
+		logUpgradeLvl = "升級 #%d: %s → Lv.%d (+%d) +%.1fs",
 		logSell = "刪除塔 #%d: %s  +%.1fs",
 		logSellUnknown = "刪除塔 [id:%s] (未追蹤)  +%.1fs",
 		logAbility = "塔能力 #%d %s: %s  +%.1fs",
@@ -260,9 +252,35 @@ local Lang = {
 		abilityReady = "🟢 就緒",
 		abilityTimerFmt = "⏳ %.0fs",
 		abilityAutoLabel = "自動",
-		abilityFireFmt = "⚡ %s",
 		abilityWaitId = "⏳ 等待 ID",
 		abilityNoTowers = "尚無擁有能力的塔",
+		["Mango Barrage"] = "芒果彈幕",
+		["Timestop"] = "時間暫停",
+		["Power Up"] = "能力強化",
+		["Speed Up"] = "速度提升",
+		["Boosted Attacks"] = "強化攻擊",
+		["Energy Release"] = "能量釋放",
+		["Luck of the Draw"] = "抽牌好運",
+		["Summon Wall"] = "召喚牆壁",
+		["Vines"] = "藤蔓",
+		["Break the Chains"] = "掙脫鎖鏈",
+		["Egg Throw"] = "投擲雞蛋",
+		["Garden Transfiguration"] = "花園變身",
+		["Freezing"] = "冰凍",
+		["Range Boost"] = "射程提升",
+		["Light Up"] = "點亮",
+		["The Floor Is Lava"] = "地板是岩漿",
+		["Ash Cloud"] = "火山灰雲",
+		["The Floor Is Chocolate"] = "地板是巧克力",
+		["Electromagnetic Surge"] = "電磁浪湧",
+		["Solar Flare"] = "太陽耀斑",
+		["Tsunami"] = "海嘯",
+		["Life Transmutation"] = "生命轉換",
+		["Festive Surge"] = "節日爆發",
+		["Explode"] = "爆炸",
+		["Bangsplosion"] = "砰爆",
+		["Loveburst"] = "愛心爆發",
+		["Toggle"] = "切換",
 	},
 	en = {
 		titleMain = "Garden Tower | Tracker",
@@ -288,12 +306,6 @@ local Lang = {
 		lblTrackerOp = "🛠️ Tracker Ops",
 		lblScriptParam = "📝 Script Params",
 		lblAutoReplay = "Auto Replay",
-		lblRecordMutation = "Record All Mutations & Enchants",
-		lblRecordMutationDesc = "Includes all tower enchants/mutations in scripts (Shiny is always recorded)",
-		lblCostMode = "Cost-based recording (no time)",
-		lblCostModeDesc = "Generated script gates by cost ($) instead of time; robust to income/difficulty differences, ideal for AFK replay",
-		lblSkipPhase2Load = "Disable Phase2 suffix auto-search",
-		lblSkipPhase2LoadDesc = "When on, switching to the 2nd map won't auto suffix-search an old external Phase2 unless a name is specified (named loads still work); enable while recording a new Phase2, disable after",
 		lblFileName = "Script name:",
 		phFileName = "Enter script name...",
 		infoFmt = "Map: %s\nDifficulty: %s\nModifier: %s\nAuto Skip: %s",
@@ -303,7 +315,6 @@ local Lang = {
 		lblPhase2Name = "Phase2 Load Name (prefix)",
 		logNoOps = "⚠️ No operations recorded",
 		logSaved = "✅ Saved: %s",
-		logSavedPhase2 = "✅ Saved Phase2: %s",
 		logSaveFailed = "❌ Save failed: %s",
 		logNoScripts = "No saved scripts",
 		logCopied = "📋 Copied: %s",
@@ -316,26 +327,18 @@ local Lang = {
 		logReset = "🔄 Tracker reset",
 		logTowerListHdr = "=== Tower List ===",
 		logNoRecord = "  (empty)",
-		logReady = "⏳ Ready sent, select difficulty...",
 		logSkipWave = "Skip wave  +%.1fs",
 		logSpeedSet = "Speed: %dx  +%.1fs",
 		logGameSetting = "⚙️ Setting %s = %s  +%.1fs",
-		lblGameSettings = "⚙️ Game Settings",
-		lblAutoSkipWave = "Auto Skip Wave",
 		logDiffStart = "Difficulty: %s → Timer started",
-		logDiffUpdate = "Difficulty updated: %s",
-		logModAdd = "Modifier added: %s",
-		logModRemove = "Modifier removed: %s, current: %s",
 		logWaitReady = "⏳ Waiting for game start (GameRunning)...",
 		logFlow = "📋 Flow: All maps — timer starts when GameRunning becomes true",
-		logSpecialMapReady = "🗺️ Special map detected [%s], timer starts after Ready",
 		logGameEnd = "🏁 Game ended  Total: %dm %ds (%.1fs)",
 		logStarted = "🎉 Tracker started! Map: %s  Difficulty: %s  Modifier: %s",
 		logInitFailed = "❌ Tracker init failed (not in game?)",
 		logPlaceTower = "Place #%d: %s  +%.1fs",
 		logPlaceFailed = "⚠️ Place failed: %s (rejected)",
-		logUpgrade = "Upgrade #%d: %s  +%.1fs",
-		logUpgradeUnknown = "Upgrade [id:%s] (untracked)  +%.1fs",
+		logUpgradeLvl = "Upgrade #%d: %s → Lv.%d (+%d) +%.1fs",
 		logSell = "Sell #%d: %s  +%.1fs",
 		logSellUnknown = "Sell [id:%s] (untracked)  +%.1fs",
 		logAbility = "Ability #%d %s: %s  +%.1fs",
@@ -345,9 +348,35 @@ local Lang = {
 		abilityReady = "🟢 Ready",
 		abilityTimerFmt = "⏳ %.0fs",
 		abilityAutoLabel = "Auto",
-		abilityFireFmt = "⚡ %s",
 		abilityWaitId = "⏳ Waiting ID",
 		abilityNoTowers = "No towers with abilities",
+		["Mango Barrage"] = "Mango Barrage",
+		["Timestop"] = "Timestop",
+		["Power Up"] = "Power Up",
+		["Speed Up"] = "Speed Up",
+		["Boosted Attacks"] = "Boosted Attacks",
+		["Energy Release"] = "Energy Release",
+		["Luck of the Draw"] = "Luck of the Draw",
+		["Summon Wall"] = "Summon Wall",
+		["Vines"] = "Vines",
+		["Break the Chains"] = "Break the Chains",
+		["Egg Throw"] = "Egg Throw",
+		["Garden Transfiguration"] = "Garden Transfiguration",
+		["Freezing"] = "Freezing",
+		["Range Boost"] = "Range Boost",
+		["Light Up"] = "Light Up",
+		["The Floor Is Lava"] = "The Floor Is Lava",
+		["Ash Cloud"] = "Ash Cloud",
+		["The Floor Is Chocolate"] = "The Floor Is Chocolate",
+		["Electromagnetic Surge"] = "Electromagnetic Surge",
+		["Solar Flare"] = "Solar Flare",
+		["Tsunami"] = "Tsunami",
+		["Life Transmutation"] = "Life Transmutation",
+		["Festive Surge"] = "Festive Surge",
+		["Explode"] = "Explode",
+		["Bangsplosion"] = "Bangsplosion",
+		["Loveburst"] = "Loveburst",
+		["Toggle"] = "Toggle",
 	},
 }
 
@@ -571,10 +600,10 @@ local GTD_ABILITY_DATA = {
 local function getAbiData(key)
 	local d = GTD_ABILITY_DATA[key]
 	if d then
-		return { Name = d.Name, Cooldown = d.Cooldown }
+		return { Name = T(d.Name), Cooldown = d.Cooldown }
 	end
 	return {
-		Name = key,
+		Name = T(key),
 		Cooldown = 30,
 	}
 end
@@ -2265,7 +2294,7 @@ local function generateScript(mode)
 		table.insert(fullLines, "")
 	end
 	if #usedTowers > 0 then
-		table.insert(fullLines, "Towers used (記得在大廳裝備這些塔):")
+		table.insert(fullLines, "Towers used:")
 		for _, n in ipairs(usedTowers) do
 			table.insert(fullLines, "  - " .. n)
 		end
@@ -2273,52 +2302,47 @@ local function generateScript(mode)
 	end
 	table.insert(fullLines, "]]")
 	table.insert(fullLines, "")
-	table.insert(fullLines, "-- 自動載入花園塔防 GTD 重播 API（完整.lua）")
+	table.insert(fullLines, "-- GTD_API")
 	table.insert(fullLines, "local GTD = getgenv().GTD")
 	table.insert(fullLines, "if not GTD or not GTD.ExecuteQueue then")
-	table.insert(fullLines, string.format('    loadstring(game:HttpGet("%s"))()', GTD_API_URL))
+	table.insert(fullLines, string.format('\tloadstring(game:HttpGet("%s"))()', GTD_API_URL))
 	table.insert(fullLines, "    GTD = getgenv().GTD")
 	table.insert(fullLines, "end")
 	table.insert(fullLines, "")
-	-- 大廳分支：在大廳執行時自動選圖+難度進關卡（進關卡後本腳本由 autoexec/SaveLocalScript 重載，走下方 IsInGame）
+	-- 大廳分支：在大廳執行時自動選圖+難度進關卡
 	local hasMap = type(gameSettings.mapId) == "string" and gameSettings.mapId:match("^map_") ~= nil
 	local hasDif = gameSettings.difficultyId ~= nil and gameSettings.difficultyId ~= ""
 	table.insert(fullLines, "if GTD.IsLobby() then")
-	-- 大廳：先裝備錄製用到的塔（EquipLoadout 預設先卸全部再裝，精準還原該套陣容），再選圖
+	-- 大廳：先裝備錄製用到的塔，再選圖
 	if #usedTowers > 0 then
 		local towerLits = {}
 		for _, n in ipairs(usedTowers) do
 			table.insert(towerLits, string.format('"%s"', n))
 		end
 		table.insert(fullLines, string.format(
-			'\tif GTD.EquipLoadout then GTD.EquipLoadout({ %s }) end -- 裝備這套塔',
+			'\tGTD.EquipLoadout({ %s })',
 			table.concat(towerLits, ", ")))
 	end
 	if hasMap and hasDif then
 		table.insert(fullLines, string.format(
-			'\tif GTD.SelectMap then GTD.SelectMap("%s", "%s") else warn("[GTD] 此版 API 無 SelectMap，請更新 完整.lua 後重試") end',
+			'\tGTD.SelectMap("%s", "%s")',
 			gameSettings.mapId, gameSettings.difficultyId))
-		table.insert(fullLines, '\tprint("[GTD] 已在大廳選圖，進入關卡後本腳本將自動接手執行佇列")')
-	else
-		table.insert(fullLines, '\twarn("[GTD] 錄製未含有效地圖/難度，無法自動選圖，請手動進入關卡後再執行")')
 	end
 	table.insert(fullLines, "\treturn")
 	table.insert(fullLines, "end")
 	table.insert(fullLines, "")
 	table.insert(fullLines, "if GTD.IsInGame() then")
-	-- 反巨集抖動：預設帶上（API 內預設本就開，這行讓設定在重播腳本裡可見可調；
-	-- 想關閉改成 GTD.SetJitter(false) 或註解掉本行；用 if 防舊版常駐 API 無此函式）
-	table.insert(fullLines, "\tif GTD.SetJitter then GTD.SetJitter({ actionDelayMin = 0.05, actionDelayMax = 0.35, placeOffsetStuds = 0.15, pathDistJitter = 0 }) end")
+	table.insert(fullLines, "\t-- initialization")
+	table.insert(fullLines, "\tGTD.DeBug(false)")
+	table.insert(fullLines, "\tGTD.SetJitter({ actionDelayMin = 0.05, actionDelayMax = 0.35, placeOffsetStuds = 0.15, pathDistJitter = 0 })")
 	if ScriptSettings.AutoReplay then
 		table.insert(fullLines, "\tGTD.AutoReplay(true)")
 	end
 	if gameSettings.difficultyId and gameSettings.difficultyId ~= "" then
-		table.insert(fullLines, string.format('\tGTD.SelectDifficulty("%s") -- 投票難度開始遊戲', gameSettings.difficultyId))
+		table.insert(fullLines, string.format('\tGTD.SelectDifficulty("%s")', gameSettings.difficultyId))
 	end
-	table.insert(fullLines, string.format("\tGTD.AddSetAutoSkip(%s, 0) -- Auto Skip 開局狀態",
-		gameStartAutoSkipWave and "true" or "false"))
-	table.insert(fullLines, "")
-	table.insert(fullLines, "\t-- 操作（金錢閘門=$X / 時間閘門=+Xs）")
+	table.insert(fullLines, string.format("\tGTD.AddSetAutoSkip(%s, 0)", gameStartAutoSkipWave and "true" or "false"))
+	table.insert(fullLines, "\t-- Start")
 	for _, op in ipairs(operations) do
 		writeOp(fullLines, op)
 	end
@@ -2327,9 +2351,7 @@ local function generateScript(mode)
 		table.insert(fullLines, string.format("\tGTD.AddEnd(%.1f)", gameEndElapsed))
 	end
 	table.insert(fullLines, "\tGTD.ExecuteQueue()")
-	table.insert(fullLines, '\tprint("[GTD] 佇列已載入，等待開局...")')
-	table.insert(fullLines, "else")
-	table.insert(fullLines, '\twarn("[GTD] 請在關卡內執行本重播腳本")')
+	table.insert(fullLines, '\tprint("[GTD] Queue loaded wait start!!")')
 	table.insert(fullLines, "end")
 
 	local fullScriptContent = table.concat(fullLines, "\n")
@@ -2337,7 +2359,8 @@ local function generateScript(mode)
 	-- 外層啟動器（照 NTD 兩層架構）：載入 API → SaveLocalScript（存檔供 AutoReplay/重連重載）→ 執行內層
 	local outer = {}
 	table.insert(outer, "--[[")
-	table.insert(outer, "  花園塔防 放置追蹤器 生成的重播腳本")
+	table.insert(outer, "  Script By: GTD Place Tracker script ")
+	table.insert(outer, '  URL: loadstring(game:HttpGet("https://raw.githubusercontent.com/Tseting-nil/Garden-Tower-Defense-script/refs/heads/main/Tool/%E6%94%BE%E7%BD%AE%E8%BF%BD%E8%B9%A4%E5%99%A8.lua"))()')
 	table.insert(outer, string.format("  Map: %s  |  Difficulty: %s", gameSettings.mapId, gameSettings.difficulty))
 	if gameEndElapsed then
 		table.insert(outer, string.format("  Time: %dm %ds", math.floor(gameEndElapsed / 60), math.floor(gameEndElapsed % 60)))
@@ -2350,10 +2373,12 @@ local function generateScript(mode)
 	table.insert(outer, "")
 	table.insert(outer, "local GTD = getgenv().GTD")
 	table.insert(outer, "if not GTD or not GTD.ExecuteQueue then")
-	table.insert(outer, string.format('    loadstring(game:HttpGet("%s"))()', GTD_API_URL))
+	table.insert(outer, string.format('\tloadstring(game:HttpGet("%s"))()', GTD_API_URL))
+	table.insert(outer, '    --loadstring(game:HttpGet("http://127.0.0.1:8000/GTD_API_TEST"))()')
 	table.insert(outer, "    GTD = getgenv().GTD")
 	table.insert(outer, "end")
-	table.insert(outer, "if GTD.SaveLocalScript then GTD.SaveLocalScript(fullScript) end")
+	table.insert(outer, "")
+	table.insert(outer, "GTD.SaveLocalScript(fullScript)")
 	table.insert(outer, "loadstring(fullScript)()")
 
 	return table.concat(outer, "\n")
@@ -2417,29 +2442,37 @@ local function buildAbilityCard(model)
 		local capturedCd = abi.Cooldown
 		local autoEnabled = saved[key] == true
 
-		local abiLabel = Instance.new("TextLabel")
-		abiLabel.Size = UDim2.new(1, 0, 0, 22)
-		abiLabel.BackgroundTransparency = 1
-		abiLabel.Text = string.format(
-			"#%d  %s  [ID: %s]    %s",
-			info.order,
-			info.name,
-			idStr,
-			T("abilityFmt"):format(abi.Name, abi.Cooldown)
-		)
-		abiLabel.TextColor3 = Theme.Accent
-		abiLabel.Font = Theme.FontBold
-		abiLabel.TextSize = 14
-		abiLabel.TextXAlignment = Enum.TextXAlignment.Left
-		abiLabel.TextTruncate = Enum.TextTruncate.AtEnd
-		abiLabel.LayoutOrder = idx * 10
-		abiLabel.ZIndex = 13
-		abiLabel.Parent = container
+		local towerName = (GTD and GTD.ToName) and GTD.ToName(info.name) or info.name
+		local titleLabel = Instance.new("TextLabel")
+		titleLabel.Size = UDim2.new(1, 0, 0, 18)
+		titleLabel.BackgroundTransparency = 1
+		titleLabel.Text = string.format("#%d  %s  [ID: %s]", info.order, towerName, idStr)
+		titleLabel.TextColor3 = Theme.Accent
+		titleLabel.Font = Theme.FontBold
+		titleLabel.TextSize = 14
+		titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+		titleLabel.TextTruncate = Enum.TextTruncate.AtEnd
+		titleLabel.LayoutOrder = idx * 10
+		titleLabel.ZIndex = 13
+		titleLabel.Parent = container
+
+		local descLabel = Instance.new("TextLabel")
+		descLabel.Size = UDim2.new(1, 0, 0, 16)
+		descLabel.BackgroundTransparency = 1
+		descLabel.Text = T("abilityFmt"):format(abi.Name, abi.Cooldown)
+		descLabel.TextColor3 = Theme.TextDim
+		descLabel.Font = Theme.Font
+		descLabel.TextSize = 12
+		descLabel.TextXAlignment = Enum.TextXAlignment.Left
+		descLabel.TextTruncate = Enum.TextTruncate.AtEnd
+		descLabel.LayoutOrder = idx * 10 + 1
+		descLabel.ZIndex = 13
+		descLabel.Parent = container
 
 		local btnRow = Instance.new("Frame")
 		btnRow.Size = UDim2.new(1, 0, 0, 30)
 		btnRow.BackgroundTransparency = 1
-		btnRow.LayoutOrder = idx * 10 + 1
+		btnRow.LayoutOrder = idx * 10 + 2
 		btnRow.ZIndex = 13
 		btnRow.Parent = container
 
@@ -3081,10 +3114,10 @@ local function StartLevelWatcher()
 									end
 									local info = orderToInfo[order]
 									if info then
-										addLog(string.format(
-											"⬆ 升級 #%d: %s → Lv.%d (+%d) +%.1fs",
-											order, info.UnitType or "?", lvl, k, elapsed),
-											Color3.fromRGB(255, 255, 100))
+										addLog(
+											T("logUpgradeLvl"):format(order, info.UnitType or "?", lvl, k, elapsed),
+											Color3.fromRGB(255, 255, 100)
+										)
 									end
 								end
 							end
@@ -3513,7 +3546,7 @@ RunService.Heartbeat:Connect(function(dt)
 
 			for _, child in ipairs(Entities:GetChildren()) do
 				local unitId = child.Name
-				if GTD_ABILITY_DATA[unitId] then
+				if GTD_ABILITY_DATA[unitId] and child:FindFirstChild("OwnedIndicator") then
 					seen[child] = true
 					if not abiLiveTowers[child] then
 						local order = abiNextOrder

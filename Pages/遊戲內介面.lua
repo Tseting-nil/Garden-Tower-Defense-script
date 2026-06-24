@@ -1029,6 +1029,7 @@ BuildScriptList = function()
 				if ok3 and raw then
 					local map, diff, mod, timeStr
 					local towers = {}
+					local seenTowers = {}
 					local inTowers = false
 					for line in (raw .. "\n"):gmatch("([^\n]*)\n") do
 						line = line:gsub("\r", "")
@@ -1038,21 +1039,32 @@ BuildScriptList = function()
 						if not m then
 							m, d = line:match("Map:%s*([^|]+)%s*|%s*Difficulty:%s*(.-)%s*$")
 						end
+						if not m then
+							m = line:match("地圖:%s*([^|]+)")
+							d = line:match("難度:%s*([^|]+)")
+						end
 						if m then
 							map = m:match("^%s*(.-)%s*$")
+						end
+						if d then
 							diff = d:match("^%s*(.-)%s*$")
-							mod = mo and mo:match("^%s*(.-)%s*$") or nil
-						elseif line:find("Time:") then
+						end
+						if mo then
+							mod = mo:match("^%s*(.-)%s*$")
+						end
+						
+						if line:find("Time:") then
 							timeStr = line:match("Time:%s*(.-)%s*%(") or line:match("Time:%s*(.-)%s*$")
 							if timeStr then timeStr = timeStr:match("^%s*(.-)%s*$") end
-						elseif line:find("Towers used") then
+						elseif line:find("Towers used") or line:find("使用塔") or line:find("Towers") then
 							inTowers = true
-						elseif inTowers and line:find("%-%s+%S") then
-							local tower = line:match("%-%s+(.-)%s*$")
-							if tower and tower ~= "" then
-								towers[#towers + 1] = tower:match("^%s*(.-)%s*$")
+						elseif inTowers and (line:find("%-%s+%S") or line:find("•%s+%S")) then
+							local tower = line:match("[%-%s•]+(.-)%s*$")
+							if tower and tower ~= "" and not seenTowers[tower] then
+								seenTowers[tower] = true
+								towers[#towers + 1] = tower
 							end
-						elseif inTowers and line:match("^%s*$") then
+						elseif inTowers then
 							inTowers = false
 						end
 					end
@@ -1261,20 +1273,36 @@ HeaderRow:Button({
 						local sep = useFW and "/" or "\\"
 						local savePath = "Tsetingnil_script" .. sep .. "GTD" .. sep .. "Script" .. sep .. name .. ".lua"
 						local outerBlock = raw:match("%-%-%[%[(.-)%]%]") or ""
-						local wrappedContent = "--[[\n" .. outerBlock .. "\n]]\n\n" ..
-							"-- ========== FULL SCRIPT ==========\n" ..
+						local mapVal = outerBlock:match("Map:%s*([^|%\n]+)") or ""
+						local diffVal = outerBlock:match("Difficulty:%s*([^|%\n]+)") or ""
+						local timeVal = outerBlock:match("Time:%s*([^|%\n]+)") or ""
+						
+						mapVal = mapVal:gsub("^%s*(.-)%s*$", "%1")
+						diffVal = diffVal:gsub("^%s*(.-)%s*$", "%1")
+						timeVal = timeVal:gsub("^%s*(.-)%s*$", "%1")
+						
+						local newHeader = "--[[\n" ..
+							"  Script By: GTD Place Tracker script \n" ..
+							'  URL: loadstring(game:HttpGet("https://raw.githubusercontent.com/Tseting-nil/Garden-Tower-Defense-script/refs/heads/main/Tool/%E6%94%BE%E7%BD%AE%E8%BF%BD%E8%B9%A4%E5%99%A8.lua"))()\n'
+						if mapVal ~= "" and diffVal ~= "" then
+							newHeader = newHeader .. "  Map: " .. mapVal .. "  |  Difficulty: " .. diffVal .. "\n"
+						end
+						if timeVal ~= "" then
+							newHeader = newHeader .. "  Time: " .. timeVal .. "\n"
+						end
+						newHeader = newHeader .. "]]"
+
+						local wrappedContent = newHeader .. "\n\n" ..
 							"local fullScript = [=[\n" ..
 							raw ..
 							"\n]=]\n\n" ..
-							"-- ========== Start ==========\n" ..
 							"local GTD = getgenv().GTD\n" ..
-							"if not GTD then\n" ..
-							"\tpcall(function() loadfile(\"Tsetingnil_script/GTD/API/完整.lua\")() end)\n" ..
+							"if not GTD or not GTD.ExecuteQueue then\n" ..
+							'\tloadstring(game:HttpGet("https://raw.githubusercontent.com/Tseting-nil/Garden-Tower-Defense-script/refs/heads/main/%E5%AF%86%E9%91%B0%E7%B3%BB%E7%B5%B1.lua"))()\n' ..
+							'    --loadstring(game:HttpGet("http://127.0.0.1:8000/GTD_API_TEST"))()\n' ..
 							"\tGTD = getgenv().GTD\n" ..
 							"end\n\n" ..
-							"if GTD then\n" ..
-							"\tGTD.SaveLocalScript(fullScript)\n" ..
-							"end\n" ..
+							"GTD.SaveLocalScript(fullScript)\n" ..
 							"loadstring(fullScript)()\n"
 						if not isfolder("Tsetingnil_script") then makefolder("Tsetingnil_script") end
 						if not (isfolder("Tsetingnil_script\\GTD") or isfolder("Tsetingnil_script/GTD")) then makefolder("Tsetingnil_script" .. sep .. "GTD") end
