@@ -42,7 +42,7 @@ do
 		end
 	end)
 end
-currentLang = "en"
+
 local i18n = {
 	zh = {
 		title = "大廳介面",
