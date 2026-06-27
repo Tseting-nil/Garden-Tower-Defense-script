@@ -128,6 +128,8 @@ local i18n = {
 		keyTimePerm               = "永久",
 		keyExpired                = "已過期",
 		unitDay = "天", unitHour = "時", unitMin = "分",
+		key_update_btn            = "更新密鑰",
+		key_no_update_needed      = "密鑰剩餘時間大於 1 天，無需更新密鑰",
 		instantUpdate             = "自動更新",
 		onText = "開", offText = "關",
 		instantUpdateConfirmTitle = "確認關閉自動更新？",
@@ -144,12 +146,21 @@ local i18n = {
 		stats_reset_confirm    = "確認重置統計？",
 		stats_never_reset      = "從未重置",
 		autoLobbyReplay_title = "自動重新開局設定",
-		autoLobbyReplay_label = "自動重開場數：%d / 30",
+		autoLobbyReplay_label = "自動重開場數：%d / %d",
 		autoLobbyReplay_btn_on = "自動重開：已開啟",
 		autoLobbyReplay_btn_off = "自動重開：已關閉",
 		autoLobbyReplay_btn_reset = "手動重置場數",
 		autoLobbyReplay_reset_msg = "場數已手動重設為 0",
 		autoLobbyReplay_toggle = "自動重開",
+		rotation_pool_header = "輪換腳本池（可多選，每 N 場換一支）",
+		rotation_interval_label = "每幾場輪換",
+		rotation_refresh_btn = "重新整理清單",
+		rotation_save_btn = "儲存輪換設定",
+		rotation_no_scripts = "Script 資料夾內沒有可用腳本",
+		rotation_saved_msg = "輪換設定已儲存：%d 支腳本，每 %d 場輪換",
+		rotation_empty_pool = "未選任何輪換腳本，將以同一支腳本重開",
+		rotation_picked_msg = "本輪換到腳本：%s",
+		rotation_apply_fail = "套用輪換腳本失敗，沿用目前腳本",
 	},
 	en = {
 		windowTitle    = "In-Game UI",
@@ -229,6 +240,8 @@ local i18n = {
 		keyTimePerm               = "Permanent",
 		keyExpired                = "Expired",
 		unitDay = "d", unitHour = "h", unitMin = "m",
+		key_update_btn            = "Update Key",
+		key_no_update_needed      = "Key remaining time is > 1 day, no need to update",
 		instantUpdate             = "Auto Update",
 		onText = "ON", offText = "OFF",
 		instantUpdateConfirmTitle = "Disable auto update?",
@@ -245,12 +258,21 @@ local i18n = {
 		stats_reset_confirm    = "Confirm Reset?",
 		stats_never_reset      = "Never reset",
 		autoLobbyReplay_title = "Auto Lobby Replay Config",
-		autoLobbyReplay_label = "Auto Lobby Replay: %d / 30",
+		autoLobbyReplay_label = "Auto Lobby Replay: %d / %d",
 		autoLobbyReplay_btn_on = "Auto Replay: ON",
 		autoLobbyReplay_btn_off = "Auto Replay: OFF",
 		autoLobbyReplay_btn_reset = "Reset Match Count",
 		autoLobbyReplay_reset_msg = "Match count has been reset to 0",
 		autoLobbyReplay_toggle = "Auto Lobby Replay",
+		rotation_pool_header = "Script Rotation Pool (multi-select, swap every N games)",
+		rotation_interval_label = "Games per rotation",
+		rotation_refresh_btn = "Refresh List",
+		rotation_save_btn = "Save Rotation Config",
+		rotation_no_scripts = "No scripts available in the Script folder",
+		rotation_saved_msg = "Rotation saved: %d scripts, swap every %d games",
+		rotation_empty_pool = "No rotation scripts selected; restarting with the same script",
+		rotation_picked_msg = "Rotated to script: %s",
+		rotation_apply_fail = "Failed to apply rotation script; keeping current script",
 	},
 }
 
@@ -269,7 +291,7 @@ local ReGui = loadstring(game:HttpGet("https://gist.githubusercontent.com/Tsetin
 
 local UserInputService = game:GetService("UserInputService")
 local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
-local windowSize = currentLang == "en" and UDim2.new(0, 325, 0, 280) or UDim2.new(0, 280, 0, 280)
+local windowSize = currentLang == "en" and UDim2.new(0, 325, 0, 280) or UDim2.new(0, 325, 0, 280)
 
 local TabsWindow =  ReGui:TabsWindow({
 	Title = L.windowTitle,
@@ -356,6 +378,37 @@ local KeyTime_Label = Tab_settings:Label({
 	NoTheme = true,
 	TextColor3 = Color3.fromRGB(240, 240, 240),
 })
+
+local KeyTime_UpdateBtn = Tab_settings:Button({
+	Text = L.key_update_btn,
+	Callback = function()
+		getgenv().AutoVerify = false
+		local exp = tonumber(readApiVarTable().expires_at)
+		if exp then
+			if exp > 1e10 then exp = math.floor(exp / 1000) end
+			local currentLeft = exp - os.time()
+			if currentLeft < 86400 then
+				loadstring(game:HttpGet("https://raw.githubusercontent.com/Tseting-nil/Garden-Tower-Defense-script/refs/heads/main/%E5%AF%86%E9%91%B0%E7%B3%BB%E7%B5%B1.lua"))()
+			else
+				Msg:Warning(L.key_no_update_needed)
+			end
+		end
+		getgenv().AutoVerify = true
+	end
+})
+KeyTime_UpdateBtn.Visible = false
+
+-- 初始更新按鈕顯示狀態
+pcall(function()
+	local exp = tonumber(readApiVarTable().expires_at)
+	if exp then
+		if exp > 1e10 then exp = math.floor(exp / 1000) end
+		local left = exp - os.time()
+		if left < 86400 then
+			KeyTime_UpdateBtn.Visible = true
+		end
+	end
+end)
 
 Tab_main:Separator({
 	Text = L.sectionStatus
@@ -522,13 +575,150 @@ ROW_QK:Button({
 	DoubleClick = false,
 })
 
+-- ===== 腳本輪換（每 N 場換一支錄製腳本，打散防巨集「每局同指紋」特徵）=====
+-- 池 = 使用者在下方面板勾選的腳本（Script 資料夾內檔名，可多選）。達到 interval 場時：
+-- 以隨機種子從池中挑一支（排除上次挑中的，避免連續重複）→ 把該腳本內容覆寫進
+-- main_<UserId>.lua（queue_on_teleport 的 resume 會 loadfile 它）→ 存 lastPicked → 回大廳自動執行。
+-- 設定持久化於 Rotation_Config.json，跨傳送有效（getgenv 不過傳送，故用檔案）。
+local Rotation = {
+	configPath = "Tsetingnil_script/GTD/Config/Rotation_Config.json",
+	scriptDir  = "Tsetingnil_script/GTD/Script",
+	pool       = {},   -- { "scriptA.lua", ... }
+	interval   = 20,
+	lastPicked = nil,
+}
+
+function Rotation.ensureFolder()
+	pcall(function()
+		if not isfolder or not makefolder then return end
+		if not isfolder("Tsetingnil_script") then makefolder("Tsetingnil_script") end
+		if not isfolder("Tsetingnil_script/GTD") then makefolder("Tsetingnil_script/GTD") end
+		if not isfolder("Tsetingnil_script/GTD/Config") then makefolder("Tsetingnil_script/GTD/Config") end
+	end)
+end
+
+-- 以玩家 UserId 當外層 key：同帳號在大廳/關卡內共用同一份（UserId 不隨場景變），
+-- 不同帳號各自獨立（多帳號各有各的輪換設定）。
+local function rotationUserKey()
+	return tostring(game:GetService("Players").LocalPlayer.UserId)
+end
+
+function Rotation.load()
+	local ok, data = pcall(function()
+		if not (isfile and isfile(Rotation.configPath) and readfile) then return nil end
+		return HttpService:JSONDecode(readfile(Rotation.configPath))
+	end)
+	if ok and type(data) == "table" then
+		-- 外層為 UserId 的新格式
+		local entry = data[rotationUserKey()]
+		if type(entry) == "table" then
+			Rotation.pool       = type(entry.pool) == "table" and entry.pool or {}
+			Rotation.interval   = tonumber(entry.interval) or 30
+			Rotation.lastPicked = entry.lastPicked
+		end
+	end
+	if Rotation.interval < 1 then Rotation.interval = 1 end
+end
+
+function Rotation.save()
+	pcall(function()
+		if not writefile then return end
+		Rotation.ensureFolder()
+		-- 讀回現有檔案，保留其他 UserId 的設定，只覆寫本 UserId 區段
+		local all = {}
+		local ok, existing = pcall(function()
+			if isfile and isfile(Rotation.configPath) and readfile then
+				return HttpService:JSONDecode(readfile(Rotation.configPath))
+			end
+		end)
+		if ok and type(existing) == "table" then
+			all = existing
+		end
+		all[rotationUserKey()] = {
+			pool       = Rotation.pool,
+			interval   = Rotation.interval,
+			lastPicked = Rotation.lastPicked,
+		}
+		writefile(Rotation.configPath, HttpService:JSONEncode(all))
+	end)
+end
+
+-- 列出 Script 資料夾內可選腳本（.lua），回傳排序後的檔名陣列
+function Rotation.listScripts()
+	local names = {}
+	local ok, files = pcall(listfiles, Rotation.scriptDir)
+	if ok and files then
+		for _, fp in ipairs(files) do
+			local name = fp:match("([^/\\]+)$") or fp
+			if name:match("%.lua$") then
+				names[#names + 1] = name
+			end
+		end
+	end
+	table.sort(names)
+	return names
+end
+
+function Rotation.inPool(name)
+	for _, n in ipairs(Rotation.pool) do
+		if n == name then return true end
+	end
+	return false
+end
+
+function Rotation.setInPool(name, on)
+	if on then
+		if not Rotation.inPool(name) then Rotation.pool[#Rotation.pool + 1] = name end
+	else
+		for i = #Rotation.pool, 1, -1 do
+			if Rotation.pool[i] == name then table.remove(Rotation.pool, i) end
+		end
+	end
+end
+
+-- 從池中隨機挑下一支（排除上次挑中的；池<=1 不排除）。回傳檔名或 nil（池為空）。
+function Rotation.pickNext()
+	local pool = Rotation.pool
+	if #pool == 0 then return nil end
+	if #pool == 1 then return pool[1] end
+	local candidates = {}
+	for _, n in ipairs(pool) do
+		if n ~= Rotation.lastPicked then candidates[#candidates + 1] = n end
+	end
+	if #candidates == 0 then candidates = pool end
+	math.randomseed(os.time() + math.floor((os.clock() % 1) * 1e6))
+	return candidates[math.random(1, #candidates)]
+end
+
+-- 把選中的腳本內容覆寫進 main_<UserId>.lua（resume 的 loadfile 目標）。回傳 true/false。
+-- 直接複製 Script/<name>（包裝啟動器）：resume 載入後它會自我 bootstrap GTD、
+-- 並 SaveLocalScript(內層) 把 main 修正回內層腳本，與手動執行該存檔完全一致。
+function Rotation.applyToMain(name)
+	local applied = false
+	pcall(function()
+		local srcPath = Rotation.scriptDir .. "/" .. name
+		if not (isfile and isfile(srcPath) and readfile) then return end
+		local content = readfile(srcPath)
+		if not content or content == "" then return end
+		local userId = tostring(game:GetService("Players").LocalPlayer.UserId)
+		local mainFW = "Tsetingnil_script/GTD/main_" .. userId .. ".lua"
+		local mainBS = "Tsetingnil_script\\GTD\\main_" .. userId .. ".lua"
+		local target = (isfile and isfile(mainBS) and not isfile(mainFW)) and mainBS or mainFW
+		writefile(target, content)
+		applied = true
+	end)
+	return applied
+end
+
+Rotation.load()
+
 -- === 自動重新開局 (防記憶體崩潰) GUI 元件 ===
 Tab_main:Separator({
 	Text = L.autoLobbyReplay_title
 })
 
 local AutoLobbyReplay_CountLabel = Tab_main:Label({
-	Text = string.format(L.autoLobbyReplay_label, 0),
+	Text = string.format(L.autoLobbyReplay_label, 0, Rotation.interval),
 	TextSize = fontSize or 16,
 	NoTheme = true,
 	TextColor3 = Color3.fromRGB(240, 240, 240),
@@ -554,6 +744,59 @@ local AutoLobbyReplay_ResetBtn = AutoLobbyReplay_ROW:SmallButton({
 	end,
 	DoubleClick = false,
 })
+
+-- === 腳本輪換池 UI（可折疊面板 = 多選下拉；每支錄製一個勾選框）===
+do
+	local rotHeader = Tab_main:CollapsingHeader({ Title = L.rotation_pool_header, Collapsed = true })
+
+	rotHeader:InputInt({
+		Value = Rotation.interval,
+		Label = L.rotation_interval_label,
+		Increment = 1,
+		Minimum = 1,
+		Maximum = 999,
+		Callback = function(_, v)
+			Rotation.interval = math.max(1, math.floor(tonumber(v) or 30))
+		end,
+	})
+
+	local rotTable = rotHeader:Table()
+	local function buildRotList()
+		rotTable:ClearRows()
+		local names = Rotation.listScripts()
+		if #names == 0 then
+			rotTable:NextRow():Column():Label({ Text = L.rotation_no_scripts })
+			return
+		end
+		for _, name in ipairs(names) do
+			rotTable:NextRow():Column():Checkbox({
+				Value = Rotation.inPool(name),
+				Label = name,
+				Callback = function(_, on)
+					Rotation.setInPool(name, on)
+				end,
+			})
+		end
+	end
+	buildRotList()
+
+	local rotBtnRow = rotHeader:Row()
+	rotBtnRow:Button({
+		Text = L.rotation_refresh_btn,
+		Callback = function()
+			buildRotList()
+		end,
+	})
+	rotBtnRow:Button({
+		Text = L.rotation_save_btn,
+		Callback = function()
+			Rotation.save()
+			if Msg and Msg.Success then
+				Msg:Success(string.format(L.rotation_saved_msg, #Rotation.pool, Rotation.interval))
+			end
+		end,
+	})
+end
 
 if getgenv().GTD then
 	GTD_API = getgenv().GTD
@@ -622,10 +865,22 @@ task.spawn(function()
 		
 		-- 定時更新自動重開場數 UI
 		pcall(function()
-			AutoLobbyReplay_CountLabel.Text = string.format(L.autoLobbyReplay_label, matchCount)
+			AutoLobbyReplay_CountLabel.Text = string.format(L.autoLobbyReplay_label, matchCount, Rotation.interval)
 		end)
 
-		pcall(function() KeyTime_Label.Text = fmtKeyRemaining() end)
+		pcall(function()
+			KeyTime_Label.Text = fmtKeyRemaining()
+			local exp = tonumber(readApiVarTable().expires_at)
+			local visible = false
+			if exp then
+				if exp > 1e10 then exp = math.floor(exp / 1000) end
+				local left = exp - os.time()
+				if left < 86400 then
+					visible = true
+				end
+			end
+			KeyTime_UpdateBtn.Visible = visible
+		end)
 		pcall(function() if updatePlayInfo then updatePlayInfo() end end)
 		task.wait(1)
 	end
@@ -651,36 +906,8 @@ local function formatDuration(seconds)
 	end
 end
 
-local play_cash = Tab_playinfo:Label({
-	Text = L.playCashInit,
-	TextSize = fontSize or 16,
-	NoTheme = true,
-	TextColor3 = Color3.fromRGB(240, 240, 240),
-})
-
 local play_seeds = Tab_playinfo:Label({
 	Text = L.playSeedsInit,
-	TextSize = fontSize or 16,
-	NoTheme = true,
-	TextColor3 = Color3.fromRGB(240, 240, 240),
-})
-
-local play_total_seeds = Tab_playinfo:Label({
-	Text = L.playTotalSeedsInit,
-	TextSize = fontSize or 16,
-	NoTheme = true,
-	TextColor3 = Color3.fromRGB(240, 240, 240),
-})
-
-local play_games_won = Tab_playinfo:Label({
-	Text = L.playGamesWonInit,
-	TextSize = fontSize or 16,
-	NoTheme = true,
-	TextColor3 = Color3.fromRGB(240, 240, 240),
-})
-
-local play_enemies_killed = Tab_playinfo:Label({
-	Text = L.playEnemiesKilledInit,
 	TextSize = fontSize or 16,
 	NoTheme = true,
 	TextColor3 = Color3.fromRGB(240, 240, 240),
@@ -693,24 +920,10 @@ local play_time_played = Tab_playinfo:Label({
 	TextColor3 = Color3.fromRGB(240, 240, 240),
 })
 
-local play_beggar_donated = Tab_playinfo:Label({
-	Text = L.playBeggarDonatedInit,
-	TextSize = fontSize or 16,
-	NoTheme = true,
-	TextColor3 = Color3.fromRGB(240, 240, 240),
-})
-
 updatePlayInfo = function()
 	local lp = game:GetService("Players").LocalPlayer
 	local leaderstats = lp:FindFirstChild("leaderstats")
-	local cashVal = leaderstats and leaderstats:FindFirstChild("Cash")
 	local seedsVal = leaderstats and leaderstats:FindFirstChild("Seeds")
-	
-	-- 獲取 Cash
-	local cashText = "---"
-	if cashVal then
-		cashText = tostring(cashVal.Value)
-	end
 	
 	-- 獲取 Seeds (優先 ClientDataHandler，備用方案為 leaderstats)
 	local seedsCount = nil
@@ -724,32 +937,10 @@ updatePlayInfo = function()
 		seedsCount = seedsVal.Value
 	end
 	
-	local totalSeeds = "---"
-	local gamesWon = "---"
-	local enemiesKilled = "---"
 	local timePlayed = "---"
-	local beggarDonated = "---"
-	local preciseCash = nil
-	
 	if ok and data then
-		if data.TotalSeedsEarned then totalSeeds = formatWithCommas(data.TotalSeedsEarned) end
-		if data.GamesWon then gamesWon = formatWithCommas(data.GamesWon) end
-		if data.TotalEnemiesKilled then enemiesKilled = formatWithCommas(data.TotalEnemiesKilled) end
 		if data.TotalTimePlayed then timePlayed = formatDuration(data.TotalTimePlayed) end
-		if data.SeedsDonatedToBeggar then beggarDonated = formatWithCommas(data.SeedsDonatedToBeggar) end
-		if data.Cash then preciseCash = data.Cash end
 	end
-
-	-- 優先顯示精確且帶有千分位逗號的金錢
-	if preciseCash then
-		cashText = formatWithCommas(preciseCash)
-	elseif cashVal then
-		local cleanCash = tonumber((tostring(cashVal.Value):gsub("[^%d%-]", "")))
-		if cleanCash then
-			cashText = formatWithCommas(cleanCash)
-		end
-	end
-	play_cash.Text = string.format(L.playCashFmt, cashText)
 
 	local seedsText = "---"
 	if seedsCount then
@@ -760,12 +951,7 @@ updatePlayInfo = function()
 		end
 	end
 	play_seeds.Text = string.format(L.playSeedsFmt, seedsText)
-	
-	play_total_seeds.Text = string.format(L.playTotalSeedsFmt, totalSeeds)
-	play_games_won.Text = string.format(L.playGamesWonFmt, gamesWon)
-	play_enemies_killed.Text = string.format(L.playEnemiesKilledFmt, enemiesKilled)
 	play_time_played.Text = string.format(L.playTimePlayedFmt, timePlayed)
-	play_beggar_donated.Text = string.format(L.playBeggarDonatedFmt, beggarDonated)
 end
 
 task.spawn(function()
@@ -776,10 +962,7 @@ task.spawn(function()
 		return
 	end
 	
-	local cashVal = leaderstats:WaitForChild("Cash", 5)
 	local seedsVal = leaderstats:WaitForChild("Seeds", 5)
-	
-	if cashVal then cashVal:GetPropertyChangedSignal("Value"):Connect(updatePlayInfo) end
 	if seedsVal then seedsVal:GetPropertyChangedSignal("Value"):Connect(updatePlayInfo) end
 	updatePlayInfo()
 end)
@@ -1299,7 +1482,6 @@ HeaderRow:Button({
 							"local GTD = getgenv().GTD\n" ..
 							"if not GTD or not GTD.ExecuteQueue then\n" ..
 							'\tloadstring(game:HttpGet("https://raw.githubusercontent.com/Tseting-nil/Garden-Tower-Defense-script/refs/heads/main/%E5%AF%86%E9%91%B0%E7%B3%BB%E7%B5%B1.lua"))()\n' ..
-							'    --loadstring(game:HttpGet("http://127.0.0.1:8000/GTD_API_TEST"))()\n' ..
 							"\tGTD = getgenv().GTD\n" ..
 							"end\n\n" ..
 							"GTD.SaveLocalScript(fullScript)\n" ..
@@ -1415,12 +1597,12 @@ task.spawn(function()
 				print(string.format("[GTD統計] 🏁 戰鬥結束！勝負: %s，賺取種子: +%d (初始: %d -> 結束: %d)", 
 					isWin and "勝利" or "失敗", earned, initialSeeds, finalSeeds))
 
-				-- 記憶體防崩潰：累計戰鬥場數並在達到 30 場時自動回大廳重開
+				-- 記憶體防崩潰 + 反巨集輪換：累計場數，達 interval 場時換腳本並回大廳重開
 				matchCount = matchCount + 1
-				print(string.format("[GTD統計] 📊 當前掛機累計場數: %d / 30", matchCount))
+				print(string.format("[GTD統計] 📊 當前掛機累計場數: %d / %d", matchCount, Rotation.interval))
 
-				if alrEnabled and matchCount >= 30 then
-					print("[GTD統計] 🚨 累計達到 30 場，自動返回大廳以釋放記憶體！")
+				if alrEnabled and matchCount >= Rotation.interval then
+					print(string.format("[GTD統計] 🚨 累計達到 %d 場，自動返回大廳以釋放記憶體！", Rotation.interval))
 					matchCount = 0 -- 重置計數
 					
 					-- 關閉 AutoReplay 以防重播核心在傳送前搶先執行 RestartGame
@@ -1430,6 +1612,36 @@ task.spawn(function()
 						end)
 					end
 					
+					-- 反巨集輪換：從池中隨機挑一支（排除上次）覆寫進 main_<UserId>.lua，
+					-- 換陣型/地圖/時序打散「每局同指紋」；resume(queue_on_teleport) 會載入新 main。
+					local picked = Rotation.pickNext()
+					if picked then
+						if Rotation.applyToMain(picked) then
+							Rotation.lastPicked = picked
+							Rotation.save()
+							print("[GTD統計] 🔀 " .. string.format(L.rotation_picked_msg, picked))
+							if Msg and Msg.Success then
+								Msg:Success(string.format(L.rotation_picked_msg, picked))
+							end
+						else
+							warn("[GTD統計] " .. tostring(L.rotation_apply_fail))
+						end
+					else
+						print("[GTD統計] " .. tostring(L.rotation_empty_pool))
+					end
+
+					-- 武裝 queue_on_teleport（TPChange 旗標版）：回大廳到達後自動載入 main → 大廳分支 EquipLoadout+SelectMap → 進關卡 → ExecuteQueue
+					-- 用 TPChange 版讓殘留未清的普通 queue 讓位（部分執行器不清舊 queue → 兩個 queue 重疊不知執行哪個）
+					if getgenv().GTD and Mainfunction then
+						pcall(function()
+							if Mainfunction.Queueload_TPChangeQueue then
+								Mainfunction.Queueload_TPChangeQueue()
+							elseif Mainfunction.Queueload then
+								Mainfunction.Queueload()
+							end
+						end)
+					end
+
 					task.wait(1.0)
 					returnToLobby()
 				end
