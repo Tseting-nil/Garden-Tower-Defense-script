@@ -1593,8 +1593,23 @@ task.spawn(function()
 				print(string.format("[GTD統計] 🎮 新局開始！記錄初始種子數: %d", initialSeeds))
 			end
 			
-			-- 2. 檢測到遊戲結束：有 GameEndTime 且目前處於追蹤狀態
-			if trackingActive and type(get) == "number" and get > 0 then
+			-- 2. 檢測到遊戲結束：有 GameEndTime 且目前處於追蹤狀態，或本地檔案中寫入了 tempResult
+			local tempResult = nil
+			local allData = statsReadAll()
+			if allData and allData.tempResult then
+				tempResult = allData.tempResult
+			end
+
+			local isGameEnded = false
+			if trackingActive then
+				if tempResult == "victory" or tempResult == "defeat" then
+					isGameEnded = true
+				elseif type(get) == "number" and get > 0 then
+					isGameEnded = true
+				end
+			end
+
+			if isGameEnded then
 				trackingActive = false -- 立即關閉追蹤，防止重複觸發
 				
 				-- 等待 2.0 秒讓伺服器結算並發放種子獎勵
@@ -1604,11 +1619,21 @@ task.spawn(function()
 				local earned = finalSeeds - initialSeeds
 				if earned < 0 then earned = 0 end
 				
-				-- 判斷勝負：若 BaseHP <= 0 代表基地被摧毀（失敗），否則為勝利
-				local hp = workspace:GetAttribute("BaseHP")
+				-- 判斷勝負：優先讀取 完整.lua 寫入本地的 tempResult（防止重開後 BaseHP 重置），否則才用 BaseHP 判斷
 				local isWin = true
-				if type(hp) == "number" and hp <= 0 then
-					isWin = false
+				if tempResult == "victory" or tempResult == "defeat" then
+					isWin = (tempResult == "victory")
+					-- 讀取後清除 JSON 中的 tempResult
+					pcall(function()
+						local currentData = statsReadAll()
+						currentData.tempResult = nil
+						statsWriteAll(currentData)
+					end)
+				else
+					local hp = workspace:GetAttribute("BaseHP")
+					if type(hp) == "number" and hp <= 0 then
+						isWin = false
+					end
 				end
 				
 				-- 儲存並刷新 UI
@@ -1655,9 +1680,9 @@ task.spawn(function()
 					if getgenv().GTD and Mainfunction then
 						pcall(function()
 							if Mainfunction.Queueload_TPChangeQueue then
-								Mainfunction.Queueload_TPChangeQueue()
+								Mainfunction.Queueload_TPChangeQueue("4-30場輪換")
 							elseif Mainfunction.Queueload then
-								Mainfunction.Queueload()
+								Mainfunction.Queueload(nil, "4-30場輪換")
 							end
 						end)
 					end
