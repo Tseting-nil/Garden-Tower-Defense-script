@@ -149,7 +149,6 @@ CostTracker.Init()
 -- === 腳本生成設定 ===
 local timeRoundUp = false
 local customComment = ""
-local script_SpeedMultiplier = 1
 local autoScrollEnabled = true
 local SCRIPT_SAVE_PATH = "Tsetingnil_script/GTD/Script"
 -- GTD 重播 API（完整.lua）的載入網址；生成的重播腳本會自動 loadstring 這個 URL。
@@ -245,6 +244,7 @@ local Lang = {
 		logUpgradeLvl = "升級 #%d: %s → Lv.%d (+%d) +%.1fs",
 		logSell = "刪除塔 #%d: %s  +%.1fs",
 		logSellUnknown = "刪除塔 [id:%s] (未追蹤)  +%.1fs",
+		logSellAll = "清除全部塔  +%.1fs",
 		logAbility = "塔能力 #%d %s: %s  +%.1fs",
 		logAbilityUnknown = "塔能力 [id:%s] %s (未追蹤)  +%.1fs",
 		logTowerItem = "  #%d %s [id=%s] +%.1fs",
@@ -341,6 +341,7 @@ local Lang = {
 		logUpgradeLvl = "Upgrade #%d: %s → Lv.%d (+%d) +%.1fs",
 		logSell = "Sell #%d: %s  +%.1fs",
 		logSellUnknown = "Sell [id:%s] (untracked)  +%.1fs",
+		logSellAll = "Sell all towers  +%.1fs",
 		logAbility = "Ability #%d %s: %s  +%.1fs",
 		logAbilityUnknown = "Ability [id:%s] %s (untracked)  +%.1fs",
 		logTowerItem = "  #%d %s [id=%s] +%.1fs",
@@ -388,7 +389,6 @@ end
 local i18nElements = {}
 local i18nToggleBtns = {}
 local infoLabel -- forward declaration
-local AutoSkipWaveValue = nil -- forward declaration
 local autoSkipState = {
 	on = false,
 }
@@ -445,19 +445,14 @@ end
 
 -- === 追蹤狀態 — Remote 參照 ===
 local PlaceTowerRemote = nil
-local UpgradeTowerRemote = nil
 local SellTowerRemote = nil
 local SkipWaveRemote = nil
 local GameSpeedRemote = nil
 local GamemodeRemote = nil
-local ReadyRemote = nil
-local GameRunningValue = nil
 local TowerAbilityRemote = nil
-local ToggleSettingRemote = nil
+local SellAllRemote = nil -- 花園塔防：SellAll() 一次清除場上所有塔（InvokeServer 無參數）
 -- 花園塔防：放置塔容器（workspace.Map.Entities），子物件帶 ID attribute = 升級/賣出用的 gameId
 local EntitiesFolder = nil
--- 花園塔防：ToggleAutoUpgrade(gameId) 切換某塔的自動升級
-local AutoUpgradeRemote = nil
 
 -- === 追蹤狀態 — 操作記錄 ===
 local nextOrder = 1
@@ -465,6 +460,7 @@ local orderToInfo = {}
 local idToOrder = {}
 local upgradeLog = {}
 local sellLog = {}
+local sellAllLog = {} -- 花園塔防：SellAll 一鍵清場（依序保留時間點，重播時清掉當輪所有 order 綁定）
 local skipWaveLog = {}
 local speedChangeLog = {}
 local abilityLog = {}
@@ -504,7 +500,6 @@ local gameStartTime = nil
 local gameEndElapsed = nil
 local gameStartMapId = nil
 local mapTransitionLog = {}
-local readyHooked = false
 local hookTaskQueue = {}
 
 local uiVisible = true
@@ -591,9 +586,10 @@ local GTD_ABILITY_DATA = {
 	unit_life_crystal     = { Name = "Life Transmutation",     Cooldown = 90 },
 	unit_green_lights     = { Name = "Festive Surge",          Cooldown = 45 },
 	unit_hw_pepper        = { Name = "Explode",                Cooldown = 15 },
-	unit_firework_billy   = { Name = "Bangsplosion",           Cooldown = 10 },
+	unit_firework_billy   = { Name = "Bangsplosion",           Cooldown = 10, ReadyOnSummon = true },
 	unit_val_heart        = { Name = "Loveburst",              Cooldown = 30 },
-	unit_stem_beam        = { Name = "Toggle",                 Cooldown = 3, Toggle = true },
+	-- Toggle 類能力 ReadyOnSummon=true（放置即可切換）
+	unit_stem_beam        = { Name = "Toggle",                 Cooldown = 3, Toggle = true, ReadyOnSummon = true },
 }
 
 -- key = unit_id（花園塔防一塔一能力）。回傳 { Name, Cooldown }。
@@ -2081,6 +2077,9 @@ local function writeOp(lines, op)
 		end
 	elseif op.type == "skipwave" then
 		table.insert(lines, string.format("\tGTD.AddSkipWave(%s) -- %s", gate, tag))
+	elseif op.type == "sellall" then
+		-- 一鍵清場（時間閘門；清掉場上全部塔）。重播時 GTD 會清掉當輪所有 order 綁定。
+		table.insert(lines, string.format("\tGTD.AddSellAll(%s) -- sell all %s", gate, tag))
 	elseif op.type == "gamesetting" then
 		if op.name == "AutoSkipWave" then
 			table.insert(lines, string.format("\tGTD.AddSetAutoSkip(%s, %s) -- Auto Skip %s %s",
@@ -2091,9 +2090,18 @@ local function writeOp(lines, op)
 		end
 	elseif op.type == "speed" then
 		table.insert(lines, string.format("\tGTD.AddSetSpeed(%d, %s) -- Speed %dx %s", op.speed, gate, op.speed, tag))
+	elseif op.type == "towerability" then
+		-- 塔能力：時間閘門（ability 不靠金錢，gate 已是時間）。重播靠 order 反查當輪 gameId。
+		-- 未追蹤（order=nil，多為腳本載入前已放置的塔）則只留警告註解，無法重播。
+		if op.order then
+			table.insert(lines, string.format("\tGTD.AddTowerAbility(%d, %s) -- #%d %s %s",
+				op.order, gate, op.order, tostring(op.abilityName or ""), tag))
+		else
+			table.insert(lines, string.format("\t-- WARN: ability untracked tower [ID:%s] %s %s",
+				tostring(op.gameId), tostring(op.abilityName or ""), tag))
+		end
 	end
 	-- autoupgrade 已移除：自動升級由 Level 監看器收成普通 upgrade，走上面的 upgrade 分支
-	-- towerability 非花園塔防重播操作，已移除
 end
 
 local function buildOperations()
@@ -2130,6 +2138,12 @@ local function buildOperations()
 		table.insert(operations, {
 			type = "skipwave",
 			elapsed = sk.elapsed or 0,
+		})
+	end
+	for _, sa in ipairs(sellAllLog) do
+		table.insert(operations, {
+			type = "sellall",
+			elapsed = sa.elapsed or 0,
 		})
 	end
 	for _, sp in ipairs(speedChangeLog) do
@@ -2237,6 +2251,42 @@ local function getUnitCost(unitId, level)
 	end
 	local up = type(uc.Upgrades) == "table" and uc.Upgrades[level - 1]
 	return (type(up) == "table" and type(up.Cost) == "number") and up.Cost or nil
+end
+
+-- 動態補齊能力資料：GTD_ABILITY_DATA 是一次性 dump（33 塔），遊戲後續新增的能力塔
+-- （如 unit_plasma_blaster）不在表內 → 控制台不顯示、log 名稱退回 unit_id。
+-- 這裡對「場上實際出現」的未知塔惰性 require 其單位設定讀 UnitConfig.PlayerTriggeredAbility，
+-- 補進 GTD_ABILITY_DATA（只 require 真的出現的少數塔，不會像全表 require 那樣造成 WSA 閃退）。
+-- 回傳 { Name, Cooldown[, MinLevel, Toggle] } 或 nil（該塔無能力）。負結果也快取，避免每幀重複 require。
+local abilityDataChecked = {}
+local function ensureAbilityData(unitId)
+	if not unitId then return nil end
+	local d = GTD_ABILITY_DATA[unitId]
+	if d then return d end
+	if abilityDataChecked[unitId] then return nil end
+
+	local cfg = getUnitConfig(unitId)
+	if not cfg then
+		return nil -- 設定還沒就緒/require 失敗：不負快取，下次掃描再試
+	end
+	abilityDataChecked[unitId] = true -- 確實拿到設定才定案（有/無能力）
+	local uc = cfg.UnitConfig
+	local pta = type(uc) == "table" and uc.PlayerTriggeredAbility
+	if type(pta) == "table" and pta.Name then
+		local entry = {
+			Name = tostring(pta.Name),
+			Cooldown = type(pta.Cooldown) == "number" and pta.Cooldown or 30,
+		}
+		if pta.MinLevel then entry.MinLevel = pta.MinLevel end
+		if pta.Toggle then entry.Toggle = true end
+		-- ReadyOnSummon=true：放置即就緒；否則（false/nil）放置時先進入滿冷卻（與遊戲一致）
+		if pta.ReadyOnSummon then entry.ReadyOnSummon = true end
+		GTD_ABILITY_DATA[unitId] = entry
+		towersWithAbility[unitId] = { unitId }
+		print(string.format("[GTD Tracker] 動態補上能力塔 %s → %s (CD %ss)", unitId, entry.Name, tostring(entry.Cooldown)))
+		return entry
+	end
+	return nil
 end
 
 -- 用查表價覆寫成本 → op.correctedCost（依每塔升級次數累進等級）
@@ -2356,7 +2406,7 @@ local function generateScript(mode)
 
 	local fullScriptContent = table.concat(fullLines, "\n")
 
-	-- 外層啟動器（照 NTD 兩層架構）：載入 API → SaveLocalScript（存檔供 AutoReplay/重連重載）→ 執行內層
+	-- 外層啟動器：載入 API → SaveLocalScript（儲存腳本供自動重播或重新連線時載入）→ 執行佇列
 	local outer = {}
 	table.insert(outer, "--[[")
 	table.insert(outer, "  Script By: GTD Place Tracker script ")
@@ -2792,6 +2842,7 @@ resetBtn.MouseButton1Click:Connect(function()
 	towerObjById = {}     -- 清空塔物件快取（Level 偵測）
 	lastLevelByOrder = {} -- 清空等級基準（Level 偵測）
 	sellLog = {}
+	sellAllLog = {}
 	skipWaveLog = {}
 	speedChangeLog = {}
 	abilityLog = {}
@@ -2803,7 +2854,6 @@ resetBtn.MouseButton1Click:Connect(function()
 	gameEndElapsed = nil
 	gameStartMapId = nil
 	mapTransitionLog = {}
-	readyHooked = false
 
 	-- 重置能力面板
 	for model in pairs(abiTowerCards) do
@@ -2933,8 +2983,8 @@ local function findUnboundEntityAt(targetPos)
 	return nil
 end
 
--- 待綁定放置佇列：__namecall hook 由「遊戲」呼叫時跑在受限能力執行緒（lacking capability Plugin），
--- 不能建立 UI Instance；故 hook 只 push 純表工作，實際綁定+addLog 移到 Heartbeat（elevated）處理。
+-- 待綁定放置佇列：__namecall hook 由「遊戲」呼叫時跑在受限能力執行緒（缺少 Plugin 權限），
+-- 不能建立 UI 實體（Instance）；故 hook 只將資料放入佇列，實際綁定與日誌輸出移至 Heartbeat（具備完整權限）處理。
 local pendingPlacements = {}
 
 -- 每幀處理待綁定放置（在 Heartbeat 內呼叫 → elevated capability，可操作 Instance）。
@@ -3137,16 +3187,12 @@ local function InitTracker()
 		-- 花園塔防：remote 全在 ReplicatedStorage.RemoteFunctions（扁平，皆 InvokeServer）
 		local RF = ReplicatedStorage:WaitForChild("RemoteFunctions", 10)
 		PlaceTowerRemote = RF:WaitForChild("PlaceUnit", 10)
-		UpgradeTowerRemote = RF:WaitForChild("UpgradeUnit", 10)
 		SellTowerRemote = RF:WaitForChild("SellUnit", 10)
 		SkipWaveRemote = RF:WaitForChild("SkipWave", 10)
 		GameSpeedRemote = RF:WaitForChild("ChangeTickSpeed", 10)
 		GamemodeRemote = RF:WaitForChild("PlaceDifficultyVote", 10) -- 難度投票
 		TowerAbilityRemote = RF:FindFirstChild("ActivateUnitAbility")
-		AutoUpgradeRemote = RF:FindFirstChild("ToggleAutoUpgrade")
-		ToggleSettingRemote = nil
-		ReadyRemote = nil      -- 花園塔防無 Ready remote（難度投票後倒數即開始）
-		GameRunningValue = nil -- 花園塔防無 GameRunning 值，狀態走 workspace 屬性
+		SellAllRemote = RF:FindFirstChild("SellAll") -- 一鍵清場（無參數）
 
 		-- 放置塔容器（升級/賣出 gameId 來源）
 		local Map = workspace:WaitForChild("Map", 10)
@@ -3284,9 +3330,25 @@ local function InitTracker()
 			return result
 		end
 
+		-- 花園塔防：SellAll() 一鍵清除場上所有塔（InvokeServer 無參數）。
+		-- ⚠️⚠️ 此 handler「絕對禁止做任何 instance namecall」(GetChildren/FindFirstChild/WaitForChild…)！
+		-- dispatch 是「記完不 return，落到底部 return oldNamecall(self,...) 原生轉發」。Potassium 在 hook 內
+		-- 做 namecall 會改掉「當前 namecall method」且不還原 → oldNamecall 把 SellAll:InvokeServer() 變成
+		-- SellAll:FindFirstChild() → "Argument 1 missing or nil"、清場根本沒執行（連遊戲自己的按鈕都被弄壞）。
+		-- 已用 remote-spy 實證。因此只做純 Lua 記錄；要 namecall 才能拿的「清場前塔數」一律不取。
+		NamecallHandlers.InvokeServer.SellAll = function()
+			if not isGameRunning then
+				return
+			end
+			local elapsed = getElapsed() -- tick() 為一般函式呼叫、非 namecall，安全
+			table.insert(sellAllLog, { elapsed = elapsed })
+			queueHookTask(function()
+				addLog(T("logSellAll"):format(elapsed), Color3.fromRGB(255, 80, 80))
+			end)
+		end
+
 		NamecallHandlers.InvokeServer.TowerAbility = function(_, args, result)
 			local towerId = tonumber(args[1])
-			local abilityName = args[2] or "Unknown"
 			local idStr = args[1]
 
 			queueHookTask(function()
@@ -3298,14 +3360,23 @@ local function InitTracker()
 				local info = order and orderToInfo[order]
 				local elapsed = getElapsed()
 
+				-- 花園塔防 ActivateUnitAbility 只送 gameId（無能力名，見 remote-spy）；
+				-- 能力名/能力鍵一律由該塔 unit_id 反查（一塔一能力）。abilityKey 用 unit_id
+				-- 才與 towersWithAbility / 面板 widget 的 key 一致 → 冷卻提示能正確綁到卡片。
+				local unitId = info and info.UnitType
+				local abiData = unitId and ensureAbilityData(unitId) -- 未知塔惰性補資料，名稱才不會退回 unit_id
+				local abilityKey = unitId
+				local abilityName = (abiData and T(abiData.Name)) or (unitId and T(unitId)) or "Unknown"
+
 				table.insert(abilityLog, {
 					gameId = towerId,
 					order = order,
+					abilityKey = abilityKey,
 					abilityName = abilityName,
 					elapsed = elapsed,
 				})
 
-				pcall(onAbilityTowerAbility, towerId, abilityName)
+				pcall(onAbilityTowerAbility, towerId, abilityKey)
 
 				if info then
 					addLog(
@@ -3398,6 +3469,10 @@ local function InitTracker()
 					local args = { ... }
 					NamecallHandlers.InvokeServer.TowerAbility(self, args, res[1])
 					return table.unpack(res, 1, res.n)
+				elseif SellAllRemote and self == SellAllRemote then
+					-- ⚠️ handler 只做純 Lua 記錄（嚴禁 namecall，原因見其定義）；pcall 包住絕不影響原呼叫。
+					-- 記完「不 return」，落到底部 return oldNamecall(self, ...) 原生轉發（無參數、清場照常執行）。
+					pcall(NamecallHandlers.InvokeServer.SellAll)
 				elseif self == SkipWaveRemote then
 					local res = table.pack(oldNamecall(self, ...))
 					local args = { ... }
@@ -3419,7 +3494,7 @@ local function InitTracker()
 			return oldNamecall(self, ...)
 		end
 
-		-- 針對手機端（Delta/codex/Arceus/Vega）製作hook。
+		-- 針對手機端執行器（Delta / Codex / Arceus / Vega）建立 Hook。
 		local finalHook = hookFunc
 		local executorName = "Unknown"
 		local isMobileExecutor = false
@@ -3499,7 +3574,6 @@ local function InitTracker()
 					gameEndElapsed = endElapsed
 					isGameRunning = false
 					gameStartTime = nil
-					readyHooked = false
 					stopAbilityRemoteTriggers()
 					addLog(
 						T("logGameEnd"):format(math.floor(endElapsed / 60), math.floor(endElapsed % 60), endElapsed),
@@ -3553,7 +3627,8 @@ RunService.Heartbeat:Connect(function(dt)
 
 			for _, child in ipairs(Entities:GetChildren()) do
 				local unitId = child.Name
-				if GTD_ABILITY_DATA[unitId] and child:FindFirstChild("OwnedIndicator") then
+				-- 先檢查便宜的 OwnedIndicator，再惰性解析能力（未知塔會 require 一次其單位設定）
+				if child:FindFirstChild("OwnedIndicator") and ensureAbilityData(unitId) then
 					seen[child] = true
 					if not abiLiveTowers[child] then
 						local order = abiNextOrder
@@ -3568,9 +3643,20 @@ RunService.Heartbeat:Connect(function(dt)
 						}
 						abiLiveTowers[child] = info
 
+						-- 放置初始冷卻：與遊戲一致——非 ReadyOnSummon 的能力，塔一出現（放置）就先進入
+						-- 滿冷卻，倒數完成後才可觸發。ReadyOnSummon=true 的（firework_billy/stem_beam）維持一出現即就緒。
+						-- 用 abiGameClock 當起點 → getAbilityRemaining 回傳滿冷卻並隨遊戲時間倒數。
+						for _, abilityKey in ipairs(info.abilityKeys) do
+							local data = GTD_ABILITY_DATA[abilityKey]
+							if not (data and data.ReadyOnSummon) then
+								info.cooldowns[abilityKey] = abiGameClock
+							end
+						end
+
 						if info.gameId then
 							abiModelByGameId[info.gameId] = child
 							if abiGameIdCooldownHint[info.gameId] then
+								-- 實際發動記錄（remote-spy 抓到的觸發時間）較準，覆寫上面的初始冷卻
 								for k, t0 in pairs(abiGameIdCooldownHint[info.gameId]) do
 									info.cooldowns[k] = t0
 								end
