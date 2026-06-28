@@ -1585,15 +1585,7 @@ task.spawn(function()
 			local gst = workspace:GetAttribute("GameStartTime")
 			local get = workspace:GetAttribute("GameEndTime")
 			
-			-- 1. 檢測到新局開始：GameStartTime 改變且大於 0
-			if type(gst) == "number" and gst > 0 and gst ~= lastGameStart then
-				lastGameStart = gst
-				initialSeeds = getSeeds()
-				trackingActive = true
-				print(string.format("[GTD統計] 🎮 新局開始！記錄初始種子數: %d", initialSeeds))
-			end
-			
-			-- 2. 檢測到遊戲結束：有 GameEndTime 且目前處於追蹤狀態，或本地檔案中寫入了 tempResult
+			-- 1. 檢測到遊戲結束：有 GameEndTime 且目前處於追蹤狀態，或本地檔案中寫入了 tempResult
 			local tempResult = nil
 			local allData = statsReadAll()
 			if allData and allData.tempResult then
@@ -1690,6 +1682,14 @@ task.spawn(function()
 					task.wait(1.0)
 					returnToLobby()
 				end
+			end
+
+			-- 2. 檢測到新局開始：GameStartTime 改變且大於 0，且目前非追蹤狀態（確保前一局完全結算）
+			if not trackingActive and type(gst) == "number" and gst > 0 and gst ~= lastGameStart then
+				lastGameStart = gst
+				initialSeeds = getSeeds()
+				trackingActive = true
+				print(string.format("[GTD統計] 🎮 新局開始！記錄初始種子數: %d", initialSeeds))
 			end
 		end)
 	end
