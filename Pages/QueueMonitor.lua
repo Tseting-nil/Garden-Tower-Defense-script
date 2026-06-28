@@ -48,6 +48,8 @@ local i18n = {
 		op_place = "放置 %s (#%d)",
 		op_upgrade = "升級 %s (#%d)",
 		op_sell = "售出 %s (#%d)",
+		op_ability = "塔能力 %s (#%d)",
+		op_sellall = "清除全部塔",
 		op_skipwave = "手動跳波",
 		op_autoskip_on = "設定自動跳波：開",
 		op_autoskip_off = "設定自動跳波：關",
@@ -76,6 +78,8 @@ local i18n = {
 		op_place = "Place %s (#%d)",
 		op_upgrade = "Upgrade %s (#%d)",
 		op_sell = "Sell %s (#%d)",
+		op_ability = "Ability %s (#%d)",
+		op_sellall = "Sell All Towers",
 		op_skipwave = "Manual Skip Wave",
 		op_autoskip_on = "Set Auto Skip: On",
 		op_autoskip_off = "Set Auto Skip: Off",
@@ -586,6 +590,11 @@ local function initUIList()
 		elseif op.type == "sell" then
 			local tName = getTowerNameForOrder(op.order)
 			detailStr = string.format(L.op_sell, tName, op.order)
+		elseif op.type == "ability" then
+			local tName = getTowerNameForOrder(op.order)
+			detailStr = string.format(L.op_ability, tName, op.order)
+		elseif op.type == "sellall" then
+			detailStr = L.op_sellall
 		elseif op.type == "skipwave" then
 			detailStr = L.op_skipwave
 		elseif op.type == "autoskip" then
@@ -806,6 +815,38 @@ local function hookMainfunctions()
 			op.status = "completed"
 			moveToNextOp()
 			scrollToActiveOp()
+		end
+	end
+
+	-- 塔能力（AddTowerAbility → op.type == "ability"）
+	local RawActivateAbility = Mainfunction.RawActivateAbility
+	if RawActivateAbility then
+		Mainfunction.RawActivateAbility = function(...)
+			local ok = RawActivateAbility(...)
+			local Scripttable, Mainfunction = getGTD()
+			local op = Scripttable.queue[current_index]
+			if op and op.type == "ability" then
+				op.status = "completed"
+				moveToNextOp()
+				scrollToActiveOp()
+			end
+			return ok
+		end
+	end
+
+	-- 一鍵清場（AddSellAll → op.type == "sellall"）
+	local RawSellAll = Mainfunction.RawSellAll
+	if RawSellAll then
+		Mainfunction.RawSellAll = function(...)
+			local ok = RawSellAll(...)
+			local Scripttable, Mainfunction = getGTD()
+			local op = Scripttable.queue[current_index]
+			if op and op.type == "sellall" then
+				op.status = "completed"
+				moveToNextOp()
+				scrollToActiveOp()
+			end
+			return ok
 		end
 	end
 
