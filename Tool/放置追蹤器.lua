@@ -406,12 +406,13 @@ end
 -- 即時讀取 AutoSkipWave。快取物件失效時（遊戲開局會重建 Settings 值，舊物件 Changed 不再觸發、
 -- Value 停在舊值）自動依路徑重抓，避免顯示/偵測錯誤。回傳明確 boolean，修正「Value=false 時誤用 fallback」的舊 bug。
 -- 花園塔防沒有 Values.Settings.AutoSkipWave；改讀遊戲內 UI 文字
--- PlayerGui.GameGuiNoInset.Screen.Top.WaveControls.AutoSkip.Title.Text = "Auto Skip: On/Off"
+-- PlayerGui.GameGuiNoInset.Screen.Top.WaveControls.WaveControls.AutoSkip.TextLabel.Text = "Auto Skip: On/Off"
 local function readAutoSkipWave()
 	local ok, on = pcall(function()
 		local pg = Players.LocalPlayer:FindFirstChild("PlayerGui")
 		local node = pg and pg:FindFirstChild("GameGuiNoInset")
-		for _, n in ipairs({ "Screen", "Top", "WaveControls", "AutoSkip", "Title" }) do
+		-- 遊戲更新後路徑：Top.WaveControls.WaveControls.AutoSkip.TextLabel
+		for _, n in ipairs({ "Screen", "Top", "WaveControls", "WaveControls", "AutoSkip", "TextLabel" }) do
 			node = node and node:FindFirstChild(n)
 		end
 		return node and node.Text and string.find(node.Text, "Auto Skip: On") ~= nil
@@ -2304,7 +2305,11 @@ local function applyTablePriceCorrection(operations)
 			local info = orderToInfo[op.order]
 			local name = info and info.UnitType
 			local price = getUnitCost(name, lvl)
-			if price then op.correctedCost = math.max(0, math.floor(price + 0.5)) end
+			if price then
+				-- 附魔升級價倍率（如 thrifty 0.95）；遊戲實付 = round(牌價 × 倍率)
+				local mult = info and info.upgradeCostMult or 1
+				op.correctedCost = math.max(0, math.floor(price * mult + 0.5))
+			end
 		end
 	end
 end
@@ -3093,6 +3098,20 @@ local function collectTowerObjects(neededIds)
 	end)
 end
 
+-- 附魔（RollableTrait）：塔物件帶 RollableTraitId / RollableTraitModifiers，其中
+-- UpgradeCostMultiplier（如 tr_thrifty_1 = 0.95）會讓實付升級價 = round(牌價 × 倍率)
+-- （遊戲 GetUpgradeCost）。取得塔物件時順手記到 orderToInfo，供生成腳本時修正牌價。
+local function readTowerTrait(order, obj)
+	local info = orderToInfo[order]
+	if not info or info.traitRead then
+		return
+	end
+	local mods = rawget(obj, "RollableTraitModifiers")
+	info.traitId = rawget(obj, "RollableTraitId")
+	info.upgradeCostMult = (type(mods) == "table" and type(mods.UpgradeCostMultiplier) == "number") and mods.UpgradeCostMultiplier or 1
+	info.traitRead = true
+end
+
 -- 背景監看器：補抓缺物件的塔（getgc，有冷卻）+ 偵測 .Level 增量 → 補普通升級 op。
 -- 由 InitTracker 的 task.defer（elevated）啟動，故本執行緒可碰 UI（addLog）。
 local function StartLevelWatcher()
@@ -3140,6 +3159,7 @@ local function StartLevelWatcher()
 					if presentIds[gameId] then
 						local obj = towerObjById[gameId]
 						if obj then
+							readTowerTrait(order, obj)
 							local lvl = rawget(obj, "Level")
 							if type(lvl) == "number" then
 								local last = lastLevelByOrder[order] or 1
@@ -3446,10 +3466,14 @@ local function InitTracker()
 		-- 監看 .Level 增量收成普通 upgrade，重播時即為一連串 GTD.AddUpgradeTower。
 
 		-- Hook
+		-- 花園塔防遊戲端是 pcall(RemoteFunction.InvokeServer, RemoteFunction, ...)（SharedHelper.InvokeRemoteFunction），
+		-- 屬「函式呼叫」而非 `:` namecall，__namecall hook 攔不到 → 另外 hookfunction(InvokeServer) 兩條路都掛，
+		-- 共用同一個 dispatch；inDispatch 防止兩條路徑重入造成重複記錄。
 		local oldNamecall
-		local hookFunc = function(self, ...)
-			local method = getnamecallmethod()
-			if method == "InvokeServer" or method == "invokeserver" then
+		local oldInvoke
+		local inDispatch = {}
+		local function dispatchInner(oldNamecall, self, ...)
+			do
 				if self == PlaceTowerRemote then
 					local placeAction
 					if ScriptSettings.CostMode then
@@ -3494,6 +3518,29 @@ local function InitTracker()
 			return oldNamecall(self, ...)
 		end
 
+		local function dispatch(old, self, ...)
+			-- InvokeServer 會 yield，旗標必須「每執行緒」記錄，否則等待期間其他呼叫會被漏記
+			local thread = coroutine.running()
+			if inDispatch[thread] then
+				return old(self, ...)
+			end
+			inDispatch[thread] = true
+			local res = table.pack(pcall(dispatchInner, old, self, ...))
+			inDispatch[thread] = nil
+			if not res[1] then
+				error(res[2], 0)
+			end
+			return table.unpack(res, 2, res.n)
+		end
+
+		local hookFunc = function(self, ...)
+			local method = getnamecallmethod()
+			if method == "InvokeServer" or method == "invokeserver" then
+				return dispatch(oldNamecall, self, ...)
+			end
+			return oldNamecall(self, ...)
+		end
+
 		-- 針對手機端執行器（Delta / Codex / Arceus / Vega）建立 Hook。
 		local finalHook = hookFunc
 		local executorName = "Unknown"
@@ -3517,6 +3564,22 @@ local function InitTracker()
 		oldNamecall = hookmetamethod(game, "__namecall", finalHook)
 
 		print(string.format("[GTD Tracker] __namecall Hook OK | Executor: %s | MobilePath: %s", executorName, tostring(isMobileExecutor)))
+
+		-- 函式式呼叫路徑：遊戲用 pcall(RemoteFunction.InvokeServer, rf, ...)，需 hookfunction 才攔得到
+		if hookfunction then
+			local okHook, errHook = pcall(function()
+				local rfClass = Instance.new("RemoteFunction")
+				local invokeHook = function(self, ...)
+					return dispatch(oldInvoke, self, ...)
+				end
+				if not isMobileExecutor and newcclosure then
+					invokeHook = newcclosure(invokeHook)
+				end
+				oldInvoke = hookfunction(rfClass.InvokeServer, invokeHook)
+				rfClass:Destroy()
+			end)
+			print("[GTD Tracker] InvokeServer hookfunction:", okHook and "OK" or tostring(errHook))
+		end
 
 		-- === 建立塔能力索引（花園塔防：能力資料內嵌於 GTD_ABILITY_DATA，免 require 全部單位設定，避免 WSA 閃退）===
 		local abiCount = 0

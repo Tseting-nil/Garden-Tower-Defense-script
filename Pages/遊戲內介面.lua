@@ -117,6 +117,7 @@ local i18n = {
 		alreadyRunning         = "自動化佇列已在運行中",
 		playCashInit           = "金錢：---",
 		playSeedsInit          = "種子：---",
+		playTraitTokensInit    = "附魔代幣：---",
 		playTotalSeedsInit     = "累計賺取種子：---",
 		playGamesWonInit       = "贏得場數：---",
 		playEnemiesKilledInit  = "總擊殺敵人：---",
@@ -125,6 +126,7 @@ local i18n = {
 		playCurrencyNotFound   = "找不到玩家貨幣資料",
 		playCashFmt            = "金錢：%s",
 		playSeedsFmt           = "種子：%s",
+		playTraitTokensFmt     = "附魔代幣：%s",
 		playTotalSeedsFmt      = "累計賺取種子：%s",
 		playGamesWonFmt        = "贏得場數：%s",
 		playEnemiesKilledFmt   = "總擊殺敵人：%s",
@@ -236,6 +238,7 @@ local i18n = {
 		alreadyRunning         = "Automation queue is already running",
 		playCashInit           = "Cash: ---",
 		playSeedsInit          = "Seeds: ---",
+		playTraitTokensInit    = "Trait Tokens: ---",
 		playTotalSeedsInit     = "Total Seeds Earned: ---",
 		playGamesWonInit       = "Games Won: ---",
 		playEnemiesKilledInit  = "Total Enemies Killed: ---",
@@ -244,6 +247,7 @@ local i18n = {
 		playCurrencyNotFound   = "Player currency data not found",
 		playCashFmt            = "Cash: %s",
 		playSeedsFmt           = "Seeds: %s",
+		playTraitTokensFmt     = "Trait Tokens: %s",
 		playTotalSeedsFmt      = "Total Seeds Earned: %s",
 		playGamesWonFmt        = "Games Won: %s",
 		playEnemiesKilledFmt   = "Total Enemies Killed: %s",
@@ -679,6 +683,25 @@ function Rotation.listScripts()
 	return names
 end
 
+-- 清掉輪換池中「Script 資料夾已不存在」的檔名。
+-- 舊版殘留項（腳本被刪/改名）不會出現在勾選清單裡、無法取消，卻仍計入 #pool 並可能被挑中：
+-- 症狀＝只選 1 項卻顯示「已儲存 2 支腳本」，一項都不選還剩 1 支。
+-- 列表取不到（listfiles 失敗/資料夾空）時不動池，避免誤清。
+function Rotation.prune()
+	local names = Rotation.listScripts()
+	if #names == 0 then return end
+	local exists = {}
+	for _, n in ipairs(names) do exists[n] = true end
+	local kept = {}
+	for _, n in ipairs(Rotation.pool) do
+		if exists[n] then kept[#kept + 1] = n end
+	end
+	Rotation.pool = kept
+	if Rotation.lastPicked and not exists[Rotation.lastPicked] then
+		Rotation.lastPicked = nil
+	end
+end
+
 function Rotation.inPool(name)
 	for _, n in ipairs(Rotation.pool) do
 		if n == name then return true end
@@ -698,6 +721,7 @@ end
 
 -- 從池中隨機挑下一支（排除上次挑中的；池<=1 不排除）。回傳檔名或 nil（池為空）。
 function Rotation.pickNext()
+	Rotation.prune()
 	local pool = Rotation.pool
 	if #pool == 0 then return nil end
 	if #pool == 1 then return pool[1] end
@@ -731,6 +755,7 @@ function Rotation.applyToMain(name)
 end
 
 Rotation.load()
+Rotation.prune()
 
 -- === 自動重新開局 (防記憶體崩潰) GUI 元件 ===
 Tab_main:Separator({
@@ -810,6 +835,7 @@ do
 	rotBtnRow:Button({
 		Text = L.rotation_save_btn,
 		Callback = function()
+			Rotation.prune()
 			Rotation.save()
 			if Msg and Msg.Success then
 				Msg:Success(string.format(L.rotation_saved_msg, #Rotation.pool, Rotation.interval))
@@ -933,6 +959,14 @@ local play_seeds = Tab_playinfo:Label({
 	TextColor3 = Color3.fromRGB(240, 240, 240),
 })
 
+-- 附魔代幣（Trait Tokens）：塔附魔（RollableTrait）用的新貨幣，資料在 ClientDataHandler 的 TraitTokens
+local play_trait_tokens = Tab_playinfo:Label({
+	Text = L.playTraitTokensInit,
+	TextSize = fontSize or 16,
+	NoTheme = true,
+	TextColor3 = Color3.fromRGB(240, 240, 240),
+})
+
 local play_time_played = Tab_playinfo:Label({
 	Text = L.playTimePlayedInit,
 	TextSize = fontSize or 16,
@@ -971,6 +1005,11 @@ updatePlayInfo = function()
 		end
 	end
 	play_seeds.Text = string.format(L.playSeedsFmt, seedsText)
+	local tokensText = "---"
+	if ok and data and type(data.TraitTokens) == "number" then
+		tokensText = formatWithCommas(data.TraitTokens)
+	end
+	play_trait_tokens.Text = string.format(L.playTraitTokensFmt, tokensText)
 	play_time_played.Text = string.format(L.playTimePlayedFmt, timePlayed)
 end
 
