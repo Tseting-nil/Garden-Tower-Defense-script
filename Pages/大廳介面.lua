@@ -861,6 +861,10 @@ local Localscript = {
 	Excluded = {"_Venus", "_Saturn", "_Mars"},
 }
 
+-- 執行按鈕 0.2 秒攔截：所有列的「執行」共用同一個時間戳，連點/雙擊觸發只算一次，避免腳本重複執行
+local RUN_DEBOUNCE_SEC = 0.2
+local lastRunClock = 0
+
 local BuildScriptList
 BuildScriptList = function()
 	Localscript.ScriptListTable:ClearRows()
@@ -906,6 +910,11 @@ BuildScriptList = function()
 		ActionRow:SmallButton({
 			Text = L.localscript_run,
 			Callback = function()
+				local now = os.clock()
+				if now - lastRunClock < RUN_DEBOUNCE_SEC then
+					return
+				end
+				lastRunClock = now
 				local okR, raw = pcall(readfile, script.path)
 				if not okR or not raw then
 					Msg:Warning(L.localscript_error .. ": " .. script.name)
@@ -1332,6 +1341,23 @@ do
 		return names
 	end
 
+	-- 清掉輪換池中「Script 資料夾已不存在」的檔名（腳本被刪/改名後殘留，勾選清單看不到、取消不了，
+	-- 卻仍計入 #pool → 只選 1 項顯示 2 支、一項都不選還剩 1 支）。列表取不到時不動池，避免誤清。
+	local function prunePool()
+		local names = listScripts()
+		if #names == 0 then return end
+		local exists = {}
+		for _, n in ipairs(names) do exists[n] = true end
+		local kept = {}
+		for _, n in ipairs(Rotation.pool) do
+			if exists[n] then kept[#kept + 1] = n end
+		end
+		Rotation.pool = kept
+		if Rotation.lastPicked and not exists[Rotation.lastPicked] then
+			Rotation.lastPicked = nil
+		end
+	end
+
 	local function inPool(name)
 		for _, n in ipairs(Rotation.pool) do
 			if n == name then return true end
@@ -1349,6 +1375,7 @@ do
 	end
 
 	load()
+	prunePool()
 
 	Tab_settings:Separator({ Text = L.rotation_pool_header })
 
@@ -1393,6 +1420,7 @@ do
 	rotBtnRow:Button({
 		Text = L.rotation_save_btn,
 		Callback = function()
+			prunePool()
 			save()
 			if Msg and Msg.Success then
 				Msg:Success(string.format(L.rotation_saved_msg, #Rotation.pool, Rotation.interval))
