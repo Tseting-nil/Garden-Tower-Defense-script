@@ -1,5 +1,5 @@
 if getgenv().Islobbyguiloaded then
-  return
+  --return
 end
 getgenv().Islobbyguiloaded = true
 -- 側邊通知模組
@@ -53,6 +53,7 @@ local i18n = {
 		tab_main = "Main",
 		tab_summon = "抽取",
 		tab_localscript = "本地腳本",
+    tab_trait = "附魔",
 		tab_settings = "設定",
 		localscript_path           = "路徑: ",
 		localscript_list           = "腳本列表",
@@ -143,7 +144,24 @@ local i18n = {
 		info_time = "時間",
 		info_modifier = "修飾符",
 		info_towers_used = "使用塔",
-
+    -- 附魔
+    trait_currency = "附魔代幣：%s",
+    trait_header = "附魔",
+    trait_daily = "今日免費領取：%s / %s",
+    trait_daily_reset = "重置倒數：%s",
+    trait_op = "操作",
+    trait_auto_claim = "自動領取",
+    trait_refresh = "每日獎勵：---",
+    trait_ui = "UI",
+    trait_ui_free = "免費附魔UI",
+    trait_ui_paid = "付費附魔UI",
+    trait_ui_missing = "找不到介面：%s",
+    trait_refresh_claimed = "每日獎勵：已領取",
+    trait_refresh_unclaimed = "每日獎勵：未領取",
+    trait_claim_ok = "已領取每日附魔獎勵",
+    trait_claim_fail = "領取失敗：%s",
+    trait_wait_api = "等待 API 載入...",
+    trait_wait_data = "資料載入中...",
 		-- 活動 (Event) 分頁
 		tab_event = "活動",
 		event_flower_section = "自動採花",
@@ -162,6 +180,7 @@ local i18n = {
 		tab_main = "Main",
 		tab_summon = "Summon",
 		tab_localscript = "localscript",
+		tab_trait = "Trait",
 		tab_settings = "Setting",
 		localscript_path           = "Path: ",
 		localscript_list           = "Script List",
@@ -252,7 +271,24 @@ local i18n = {
 		info_time = "Time",
 		info_modifier = "Modifier",
 		info_towers_used = "Towers used",
-
+    -- Trait
+    trait_currency = "Trait Tokens: %s",
+    trait_header = "Trait",
+    trait_daily = "Free today: %s / %s",
+    trait_daily_reset = "Resets in: %s",
+    trait_op = "Actions",
+    trait_auto_claim = "Auto Claim",
+    trait_refresh = "Daily reward: ---",
+    trait_ui = "UI",
+    trait_ui_free = "Free Trait UI",
+    trait_ui_paid = "Paid Trait UI",
+    trait_ui_missing = "UI not found: %s",
+    trait_refresh_claimed = "Daily reward: Claimed",
+    trait_refresh_unclaimed = "Daily reward: Not claimed",
+    trait_claim_ok = "Daily trait reward claimed",
+    trait_claim_fail = "Claim failed: %s",
+    trait_wait_api = "Waiting for API...",
+    trait_wait_data = "Loading data...",
 		-- Event tab
 		tab_event = "Event",
 		event_flower_section = "Auto Flower",
@@ -273,6 +309,7 @@ local Scripttable = {
 		Modules = {
 			Tab_main = {},
 			Tab_summon = {},
+			Tab_trait = {},
 			Tab_Localscript = {},
 			Tab_settings = {},
 			Tab_event = {}
@@ -300,6 +337,7 @@ for _, Name in ipairs({
 	L.tab_summon,
 	L.tab_localscript,
 	L.tab_settings,
+  L.tab_trait,
 	L.tab_event
 }) do
 	local Tab = TabsWindow:CreateTab({
@@ -342,7 +380,12 @@ local Tab_settings = Tabs[4]:ScrollingCanvas({
 	UiPadding = UDim.new(0, 0)
 })
 
-local Tab_event = Tabs[5]:ScrollingCanvas({
+local Tab_trait = Tabs[5]:ScrollingCanvas({
+	Fill = true,
+	UiPadding = UDim.new(0, 0)
+})
+
+local Tab_event = Tabs[6]:ScrollingCanvas({
 	Fill = true,
 	UiPadding = UDim.new(0, 0)
 })
@@ -1428,5 +1471,194 @@ do
 		end,
 	})
 end
+-- === Tab_trait（附魔）
+do
+	local TraitGUI = Scripttable.GUI.Modules.Tab_trait
+
+	Tab_trait:Separator({ Text = L.trait_header })
+
+	-- 附魔代幣（目前持有）
+	TraitGUI.currency = Tab_trait:Label({
+		Text = L.trait_wait_api,
+		TextSize = 16,
+	})
+
+	-- 今日免費領取進度（每日上限只計免費領取，商店買的不算）
+	TraitGUI.Daily = Tab_trait:Label({
+		Text = L.trait_wait_api,
+		TextSize = 16,
+	})
+
+	-- 下次重置倒數
+	TraitGUI.Reset = Tab_trait:Label({
+		Text = "",
+		TextSize = 16,
+	})
+
+	-- 領取每日獎勵（手動與自動共用；claiming 防止同時送出兩次）
+	local claiming = false
+	local function claimDaily(quietOnFail)
+		local api = getgenv().GTDAPI
+		if not (api and api.__loaded and api.ClaimFertilizerDaily) then
+			if not quietOnFail then Msg:Warning(L.trait_wait_api) end
+			return
+		end
+		if claiming then return end
+		claiming = true
+		task.spawn(function()
+			local okCall, ok, msg = pcall(api.ClaimFertilizerDaily)
+			claiming = false
+			if okCall and ok then
+				Msg:Success(L.trait_claim_ok .. (msg and (": " .. tostring(msg)) or ""))
+			elseif not quietOnFail then
+				Msg:Warning(string.format(L.trait_claim_fail, tostring(okCall and msg or ok)))
+			end
+			pcall(Mainfunction.RefreshTraitInfo)
+		end)
+	end
+
+	-- 操作：自動領取開關 + 刷新狀態
+	Tab_trait:Separator({ Text = L.trait_op })
+	local opRow = Tab_trait:Row()
+	-- 自動領取開關：本地儲存（以 UserId 分帳號，多帳號各自獨立），重載介面後自動還原
+	local TRAIT_CFG_PATH = "Tsetingnil_script/GTD/Config/Trait_Config.json"
+	local TRAIT_CFG_KEY = tostring(game:GetService("Players").LocalPlayer.UserId)
+
+	local function readTraitCfg()
+		local ok, data = pcall(function()
+			if isfile and isfile(TRAIT_CFG_PATH) and readfile then
+				return HttpService:JSONDecode(readfile(TRAIT_CFG_PATH))
+			end
+		end)
+		return (ok and type(data) == "table") and data or {}
+	end
+
+	local function saveAutoClaim(on)
+		pcall(function()
+			if not writefile then return end
+			if makefolder and isfolder then
+				if not isfolder("Tsetingnil_script") then makefolder("Tsetingnil_script") end
+				if not isfolder("Tsetingnil_script/GTD") then makefolder("Tsetingnil_script/GTD") end
+				if not isfolder("Tsetingnil_script/GTD/Config") then makefolder("Tsetingnil_script/GTD/Config") end
+			end
+			local all = readTraitCfg() -- 讀回整檔，保留其他帳號的設定
+			local entry = type(all[TRAIT_CFG_KEY]) == "table" and all[TRAIT_CFG_KEY] or {}
+			entry.autoClaim = on == true
+			all[TRAIT_CFG_KEY] = entry
+			writefile(TRAIT_CFG_PATH, HttpService:JSONEncode(all))
+		end)
+	end
+
+	local savedEntry = readTraitCfg()[TRAIT_CFG_KEY]
+	TraitGUI.autoClaim = type(savedEntry) == "table" and savedEntry.autoClaim == true
+	TraitGUI.AutoClaimBox = opRow:Checkbox({
+		Value = TraitGUI.autoClaim,
+		Label = L.trait_auto_claim,
+		Callback = function(_, on)
+			TraitGUI.autoClaim = on == true
+			saveAutoClaim(TraitGUI.autoClaim)
+		end,
+	})
+	-- 每日獎勵領取狀態：純文字（每秒自動更新），不是按鈕
+	TraitGUI.RefreshBtn = opRow:Label({
+		Text = L.trait_refresh,
+		TextSize = 16,
+	})
+
+	-- UI：直接切換遊戲內附魔介面的 Visible（免費刷新 TraitRoll / 付費附魔 InstantTraitRoll）
+	Tab_trait:Separator({ Text = L.trait_ui })
+	local uiRow = Tab_trait:Row()
+	-- 遊戲自己的選單管理器：GUI.Sections[名稱] 有 Open/Close/IsOpen/Toggle。
+	-- 只切 Frame.Visible 不會跑該選單的 OnOpen（那裡才會載入玩家單位清單/重置 PickUnit/Roll 面板），
+	-- 所以付費附魔 UI 打開是空的。改走 Sections.Open()，會一併關閉其他中間選單並載入資料。
+	-- 管理器表只存在記憶體（沒有 ModuleScript 路徑可取），用 getgc 掃一次後快取。
+	local gameGuiMgr = nil
+	local function findGameGuiMgr()
+		if gameGuiMgr then return gameGuiMgr end
+		local ok = pcall(function()
+			for _, v in ipairs(getgc(true)) do
+				if type(v) == "table" then
+					local s = rawget(v, "Sections")
+					if type(s) == "table" and rawget(s, "InstantTraitRoll") ~= nil and rawget(s, "TraitRoll") ~= nil then
+						gameGuiMgr = v
+						return
+					end
+				end
+			end
+		end)
+		return ok and gameGuiMgr or nil
+	end
+
+	local function toggleGameUI(name)
+		task.spawn(function()
+			local mgr = findGameGuiMgr()
+			local section = mgr and mgr.Sections[name]
+			if section and type(section.Open) == "function" then
+				local isOpen = false
+				pcall(function() isOpen = section.IsOpen() end)
+				local okCall = pcall(isOpen and section.Close or section.Open)
+				if okCall then return end
+			end
+			-- 退路：找不到管理器時直接切 Visible（內容可能是空的）
+			local ok, gui = pcall(function()
+				return game:GetService("Players").LocalPlayer.PlayerGui.GameGui.Screen.Middle:FindFirstChild(name)
+			end)
+			if not (ok and gui) then
+				Msg:Warning(string.format(L.trait_ui_missing, name))
+				return
+			end
+			gui.Visible = not gui.Visible
+		end)
+	end
+	TraitGUI.FreeUIBtn = uiRow:Button({
+		Text = L.trait_ui_free,
+		Callback = function() toggleGameUI("TraitRoll") end,
+	})
+	TraitGUI.PaidUIBtn = uiRow:Button({
+		Text = L.trait_ui_paid,
+		Callback = function() toggleGameUI("InstantTraitRoll") end,
+	})
+
+	local function fmtDuration(sec)
+		sec = math.max(0, math.floor(sec))
+		return string.format("%02d:%02d:%02d", math.floor(sec / 3600), math.floor((sec % 3600) / 60), sec % 60)
+	end
+
+	Mainfunction.RefreshTraitInfo = function()
+		local api = getgenv().GTDAPI
+		if not (api and api.__loaded and api.GetFertilizerStatus) then
+			TraitGUI.currency.Text = L.trait_wait_api
+			TraitGUI.Daily.Text = L.trait_wait_api
+			TraitGUI.Reset.Text = ""
+			TraitGUI.RefreshBtn.Text = L.trait_refresh
+			return
+		end
+		local s = api.GetFertilizerStatus() -- 僅大廳有值；資料未載入回 nil
+		if not s then
+			TraitGUI.currency.Text = L.trait_wait_data
+			TraitGUI.Daily.Text = L.trait_wait_data
+			TraitGUI.Reset.Text = ""
+			TraitGUI.RefreshBtn.Text = L.trait_refresh
+			return
+		end
+		-- 刷新按鈕文字直接顯示今日每日獎勵是否已領取
+		TraitGUI.RefreshBtn.Text = s.claimedToday and L.trait_refresh_claimed or L.trait_refresh_unclaimed
+		TraitGUI.currency.Text = string.format(L.trait_currency, tostring(s.tokens))
+		TraitGUI.Daily.Text = string.format(L.trait_daily, tostring(s.earned), tostring(s.cap))
+		TraitGUI.Reset.Text = string.format(L.trait_daily_reset, fmtDuration(s.secondsLeft))
+		-- 自動領取：可領（今日未領且未達上限）時才送出；失敗不彈通知，避免每秒洗版
+		if TraitGUI.autoClaim and s.canClaim then
+			claimDaily(true)
+		end
+	end
+
+	task.spawn(function()
+		while true do
+			pcall(Mainfunction.RefreshTraitInfo)
+			task.wait(1)
+		end
+	end)
+end
+
 
 -- === Tab_event（活動）
