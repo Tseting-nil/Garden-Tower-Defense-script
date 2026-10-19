@@ -674,7 +674,7 @@ function Rotation.listScripts()
 	if ok and files then
 		for _, fp in ipairs(files) do
 			local name = fp:match("([^/\\]+)$") or fp
-			if name:match("%.lua$") then
+			if name:match("%.lua$") or name:match("%.txt$") or name:match("%.text$") then
 				names[#names + 1] = name
 			end
 		end
@@ -1231,10 +1231,10 @@ BuildScriptList = function()
 	if ok and files then
 		for _, filePath in ipairs(files) do
 			local name = filePath:match("([^/\\]+)$") or filePath
-			if name:match("%.lua$") or name:match("%.txt$") then
+			if name:match("%.lua$") or name:match("%.txt$") or name:match("%.text$") then
 				local excluded = false
 				for _, suffix in ipairs(Localscript.Excluded) do
-					if name:match(suffix .. "%.lua$") or name:match(suffix .. "%.txt$") then
+					if name:match(suffix .. "%.lua$") or name:match(suffix .. "%.txt$") or name:match(suffix .. "%.text$") then
 						excluded = true; break
 					end
 				end
