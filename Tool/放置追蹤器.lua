@@ -512,6 +512,47 @@ local function getElapsed()
 	return tick() - gameStartTime
 end
 
+-- 基準
+local function calibrateByCountdown(runGst)
+	task.spawn(function()
+		local node = Players.LocalPlayer:FindFirstChild("PlayerGui")
+		for _, n in ipairs({ "GameGuiNoInset", "Screen", "Top", "GameInfo", "Content", "Waves", "Title" }) do
+			node = node and node:WaitForChild(n, 5)
+		end
+		if not node then
+			return
+		end
+		local function parse(text)
+			local newStart
+			local num = text:match("^%d+$") and tonumber(text)
+			if num and num <= 5 then
+				newStart = tick() - (5 - num)
+			elseif text:match("Enemies incoming") then
+				newStart = tick() - 5
+			else
+				return false
+			end
+			-- 仍是同一局才改（局已結束或換局就放棄）
+			if isGameRunning and workspace:GetAttribute("GameStartTime") == runGst then
+				gameStartTime = newStart
+			end
+			return true
+		end
+		if parse(node.Text) then
+			return
+		end
+		local conn
+		conn = node:GetPropertyChangedSignal("Text"):Connect(function()
+			if parse(node.Text) then
+				conn:Disconnect()
+			end
+		end)
+		task.delay(15, function()
+			pcall(function() conn:Disconnect() end)
+		end)
+	end)
+end
+
 local function startGameTimer(mapId)
 	if isGameRunning then
 		return false
@@ -528,6 +569,7 @@ local function startGameTimer(mapId)
 	isGameRunning = true
 	gameStartMapId = mapId or gameSettings.mapId
 	gameStartAutoSkipWave = readAutoSkipWave()
+	calibrateByCountdown(gst)
 	return true
 end
 
