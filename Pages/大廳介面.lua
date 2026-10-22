@@ -156,12 +156,45 @@ local i18n = {
     trait_ui_free = "免費附魔UI",
     trait_ui_paid = "付費附魔UI",
     trait_ui_missing = "找不到介面：%s",
+    trait_allow_replace = "允許覆蓋既有特性",
+    trait_unlock_auto = "解鎖自動滾動",
+    trait_unlock_owned = "已購買自動滾動通行證，使用遊戲原生功能",
+    trait_unlock_spoofed = "已解鎖：請關掉並重新打開自動滾動視窗",
+    trait_unlock_hook_already = "自動滾動已解鎖",
+    trait_unlock_err_no_cdh = "解鎖失敗：ClientDataHandler 不可用",
+    trait_unlock_err_no_gamepasses = "解鎖失敗：取不到 GamePasses 資料",
+    trait_unlock_err_unsupported = "此執行器不支援 hook（缺 hookmetamethod）",
+    trait_unlock_err_hook_failed = "hook 安裝失敗",
+    trait_log_header = "刷特性記錄",
+    trait_roll_start = "自製滾動 - ",
+    trait_roll_stop = "停止滾動 - ",
+    trait_roll_no_unit = "找不到目前選中的單位",
+    trait_roll_no_target = "請先勾選要滾的附魔",
+    trait_roll_result_fail = "自動滾動出錯：%s",
+    trait_log_roll_hit = "#%d 滾到 %s ✅ 命中（累計花費 %d）",
+    trait_log_roll_miss = "#%d 滾到 %s ✗ 未命中（累計花費 %d）",
+    trait_log_hit = "✅ 刷到目標特性 %s！共 %d 次，花費 %d",
+    trait_log_stopped = "已停止刷特性（%d 次，花費 %d，最後 %s）",
+    trait_log_budget = "❌ 沒刷到目標特性（%d 次，花費 %d，最後 %s）",
+    trait_log_already_has = "單位已經有目標特性 %s",
+    trait_log_has_other_trait = "該單位已有特性 %s，重骰會取代它；確定要覆蓋請先勾選解鎖",
+    trait_log_abort = "❌ 刷特性中止：%s",
+    trait_err_not_lobby = "僅限大廳使用",
+    trait_err_busy = "已有滾動進行中",
+    trait_err_no_remote = "找不到 InstantRollUnitTrait remote",
+    trait_err_bad_args = "未指定單位或目標特性",
+    trait_err_call_failed = "呼叫失敗：%s",
+    trait_err_server_rejected = "伺服器拒絕（可能貨幣不足）：%s",
+    trait_hook_intercepted = "攔截到 PreviewAutoRollUnitTrait（已擋下，未送出伺服器）",
+    trait_hook_bad_args = "攔截到的參數格式不符，略過",
+    trait_none = "無",
     trait_refresh_claimed = "每日獎勵：已領取",
     trait_refresh_unclaimed = "每日獎勵：未領取",
     trait_claim_ok = "已領取每日附魔獎勵",
     trait_claim_fail = "領取失敗：%s",
     trait_wait_api = "等待 API 載入...",
     trait_wait_data = "資料載入中...",
+    trait_data_unavailable = "無法取得玩家資料（資料未載入，或此執行器不支援）",
 		-- 活動 (Event) 分頁
 		tab_event = "活動",
 		event_flower_section = "自動採花",
@@ -283,12 +316,45 @@ local i18n = {
     trait_ui_free = "Free Trait UI",
     trait_ui_paid = "Paid Trait UI",
     trait_ui_missing = "UI not found: %s",
+    trait_allow_replace = "Allow overwriting existing trait",
+    trait_unlock_auto = "Unlock auto roll",
+    trait_unlock_owned = "Auto roll pass owned, using the game's native feature",
+    trait_unlock_spoofed = "Unlocked: close and reopen the auto roll window",
+    trait_unlock_hook_already = "Auto roll already unlocked",
+    trait_unlock_err_no_cdh = "Unlock failed: ClientDataHandler unavailable",
+    trait_unlock_err_no_gamepasses = "Unlock failed: GamePasses data unavailable",
+    trait_unlock_err_unsupported = "Executor does not support hooks (hookmetamethod missing)",
+    trait_unlock_err_hook_failed = "Hook installation failed",
+    trait_log_header = "Trait roll log",
+    trait_roll_start = "Custom Roll - ",
+    trait_roll_stop = "Stop Roll - ",
+    trait_roll_no_unit = "No unit selected",
+    trait_roll_no_target = "Select the traits to roll for first",
+    trait_roll_result_fail = "Auto roll error: %s",
+    trait_log_roll_hit = "#%d rolled %s ✅ hit (total spent %d)",
+    trait_log_roll_miss = "#%d rolled %s ✗ miss (total spent %d)",
+    trait_log_hit = "✅ Got target trait %s! %d rolls, %d spent",
+    trait_log_stopped = "Stopped rolling (%d rolls, %d spent, last %s)",
+    trait_log_budget = "❌ Target trait not rolled (%d rolls, %d spent, last %s)",
+    trait_log_already_has = "Unit already has the target trait %s",
+    trait_log_has_other_trait = "Unit already has trait %s; rolling will replace it. Tick 'Allow overwriting existing trait' first to overwrite",
+    trait_log_abort = "❌ Rolling aborted: %s",
+    trait_err_not_lobby = "Lobby only",
+    trait_err_busy = "A roll is already running",
+    trait_err_no_remote = "InstantRollUnitTrait remote not found",
+    trait_err_bad_args = "No unit or target trait specified",
+    trait_err_call_failed = "Call failed: %s",
+    trait_err_server_rejected = "Server rejected (maybe not enough currency): %s",
+    trait_hook_intercepted = "Intercepted PreviewAutoRollUnitTrait (blocked, not sent to server)",
+    trait_hook_bad_args = "Intercepted call has unexpected arguments, skipped",
+    trait_none = "None",
     trait_refresh_claimed = "Daily reward: Claimed",
     trait_refresh_unclaimed = "Daily reward: Not claimed",
     trait_claim_ok = "Daily trait reward claimed",
     trait_claim_fail = "Claim failed: %s",
     trait_wait_api = "Waiting for API...",
     trait_wait_data = "Loading data...",
+    trait_data_unavailable = "Player data unavailable (not loaded, or executor unsupported)",
 		-- Event tab
 		tab_event = "Event",
 		event_flower_section = "Auto Flower",
@@ -1635,14 +1701,27 @@ do
 			TraitGUI.RefreshBtn.Text = L.trait_refresh
 			return
 		end
-		local s = api.GetFertilizerStatus() -- 僅大廳有值；資料未載入回 nil
-		if not s then
+		-- pcall：API 內部出錯時不讓整個更新迴圈停在舊文字（先前就是拋錯 → 一直卡在「等待 API 載入」）
+		local okS, s = pcall(api.GetFertilizerStatus) -- 僅大廳有值；資料未載入回 nil
+		if not okS then
 			TraitGUI.currency.Text = L.trait_wait_data
-			TraitGUI.Daily.Text = L.trait_wait_data
+			TraitGUI.Daily.Text = tostring(s)
 			TraitGUI.Reset.Text = ""
 			TraitGUI.RefreshBtn.Text = L.trait_refresh
 			return
 		end
+		if not s then
+			-- 資料不可用：剛進大廳還在載入，或執行器 require 不到遊戲正在用的資料模組（如 Solara 缺 getgc）
+			TraitGUI.dataNilSince = TraitGUI.dataNilSince or os.clock()
+			local waited = os.clock() - TraitGUI.dataNilSince
+			local txt = waited > 20 and L.trait_data_unavailable or L.trait_wait_data
+			TraitGUI.currency.Text = txt
+			TraitGUI.Daily.Text = txt
+			TraitGUI.Reset.Text = ""
+			TraitGUI.RefreshBtn.Text = L.trait_refresh
+			return
+		end
+		TraitGUI.dataNilSince = nil
 		-- 刷新按鈕文字直接顯示今日每日獎勵是否已領取
 		TraitGUI.RefreshBtn.Text = s.claimedToday and L.trait_refresh_claimed or L.trait_refresh_unclaimed
 		TraitGUI.currency.Text = string.format(L.trait_currency, tostring(s.tokens))
@@ -1658,6 +1737,269 @@ do
 		while true do
 			pcall(Mainfunction.RefreshTraitInfo)
 			task.wait(1)
+		end
+	end)
+
+  TraitGUI.allowReplace = false
+	local replaceRow = Tab_trait:Row()
+	TraitGUI.AllowReplaceBox = replaceRow:Checkbox({
+		Value = false,
+		Label = L.trait_allow_replace,
+		Callback = function(_, on)
+			TraitGUI.allowReplace = on == true
+		end,
+	})
+
+	local unlockRow = Tab_trait:Row()
+	TraitGUI.UnlockBox = unlockRow:Checkbox({
+		Value = false,
+		Label = L.trait_unlock_auto,
+		Callback = function(box, on)
+			if not on then return end
+			local function fail(msg)
+				Msg:Warning(msg)
+				pcall(box.SetValue, box, false)
+			end
+			local api = getgenv().GTDAPI
+			if not (api and api.__loaded and api.SpoofAutoRollPass and api.EnableAutoRollHook) then
+				return fail(L.trait_wait_api)
+			end
+			local okPass, spoofOk, passCode = pcall(api.SpoofAutoRollPass)
+			if not okPass then
+				return fail(tostring(spoofOk))
+			end
+			if not spoofOk then
+				return fail(L["trait_unlock_err_" .. tostring(passCode)] or tostring(passCode))
+			end
+			if passCode == "owned" then
+				Msg:Success(L.trait_unlock_owned)
+				return
+			end
+			local okHook, hooked, hookCode = pcall(api.EnableAutoRollHook)
+			if not okHook then
+				return fail(tostring(hooked))
+			end
+			if not hooked and hookCode ~= "owns_pass" then
+				return fail(L["trait_unlock_err_" .. tostring(hookCode)] or tostring(hookCode))
+			end
+			Msg:Success(hookCode == "already" and L.trait_unlock_hook_already or L.trait_unlock_spoofed)
+		end,
+	})
+
+	Tab_trait:Separator({ Text = L.trait_log_header })
+	TraitGUI.LogConsole = Tab_trait:Console({
+		ReadOnly   = true,
+		AutoScroll = true,
+		RichText   = true,
+		MaxLines   = 300,
+		Border     = true,
+		Size       = UDim2.new(1, 0, 0, isMobile and 110 or 150),
+	})
+	local TRAIT_LOG_COLORS = {
+		success = "#64dc78",
+		warning = "#ffb43c",
+		error = "#ff5050",
+		dim = "#a0a0a0",
+	}
+	-- 寫一行到 Console（含時間與顏色）；Console 寫入失敗時退回 Msg
+	local function traitConsoleLog(kind, text)
+		local ok = pcall(function()
+			local line = string.format("%s  %s", os.date("%H:%M:%S"), text)
+			local color = TRAIT_LOG_COLORS[kind]
+			TraitGUI.LogConsole:AppendText(color and string.format("<font color='%s'>%s</font>", color, line) or line)
+		end)
+		if not ok then
+			Msg:Warning(text)
+		end
+	end
+
+  --[[
+    特性名稱表(game.Players.LocalPlayer.PlayerGui.LogicHolder.ClientLoader.GameHandler.Access:Invoke("SharedItemData"))
+    local sid = game.Players.LocalPlayer.PlayerGui.LogicHolder.ClientLoader.GameHandler.Access:Invoke("SharedItemData")
+    for _, v in pairs(sid.GetCategory("RollableTraits")) do print(v.ID, v.Params.Name) end
+  ]]
+
+	local TRAIT_NAMES = {
+		tr_blastzone = { zh = "爆破區", en = "Blastzone" },
+		tr_deadeye = { zh = "神射手", en = "Deadeye" },
+		tr_evergreen = { zh = "常青", en = "Evergreen" },
+		tr_fertilised = { zh = "施肥", en = "Fertilised" },
+		tr_high_roller = { zh = "豪賭客", en = "High Roller" },
+		tr_overbloom = { zh = "盛放", en = "Overbloom" },
+		tr_propagation = { zh = "蔓延", en = "Propagation" },
+	}
+	for _, def in ipairs({
+		{ "power", "力量", "Power" },
+		{ "sight", "視野", "Sight" },
+		{ "speed", "速度", "Speed" },
+		{ "thrifty", "節儉", "Thrifty" },
+		{ "withering", "凋零", "Withering" },
+	}) do
+		for lv, roman in ipairs({ "I", "II", "III" }) do
+			TRAIT_NAMES["tr_" .. def[1] .. "_" .. lv] = { zh = def[2] .. " " .. roman, en = def[3] .. " " .. roman }
+		end
+	end
+	local function traitName(id)
+		local n = TRAIT_NAMES[id]
+		return n and n[currentLang] or tostring(id)
+	end
+
+	local DONE_TEXT = {
+		hit = { "success", function(e) return string.format(L.trait_log_hit, traitName(e.traitId), e.rolls, e.spent) end },
+		stopped = { "info", function(e) return string.format(L.trait_log_stopped, e.rolls, e.spent, e.traitId and traitName(e.traitId) or L.trait_none) end },
+		budget = { "warning", function(e) return string.format(L.trait_log_budget, e.rolls, e.spent, e.traitId and traitName(e.traitId) or L.trait_none) end },
+		already_has = { "success", function(e) return string.format(L.trait_log_already_has, traitName(e.traitId)) end },
+		has_other_trait = { "warning", function(e) return string.format(L.trait_log_has_other_trait, traitName(e.traitId)) end },
+	}
+	local function onTraitEvent(e)
+		if e.type == "roll" then
+			local fmt = e.hit and L.trait_log_roll_hit or L.trait_log_roll_miss
+			traitConsoleLog(e.hit and "success" or "dim", string.format(fmt, e.n, traitName(e.traitId), e.spent))
+		elseif e.type == "done" then
+			local entry = DONE_TEXT[e.code]
+			if entry then
+				traitConsoleLog(entry[1], entry[2](e))
+				return
+			end
+			-- 其他 code 皆為中止類錯誤：trait_err_<code>（%s = detail）
+			local errFmt = L["trait_err_" .. tostring(e.code)] or tostring(e.code)
+			traitConsoleLog("error", string.format(L.trait_log_abort, string.format(errFmt, tostring(e.detail or ""))))
+		elseif e.type == "hook" then
+			traitConsoleLog("dim", L["trait_hook_" .. tostring(e.code)] or tostring(e.code))
+		end
+	end
+	task.spawn(function()
+		while true do
+			local api = getgenv().GTDAPI
+			if api and api.__loaded and api.SetTraitListener then
+				pcall(api.SetTraitListener, onTraitEvent)
+				return
+			end
+			task.wait(1)
+		end
+	end)
+
+	local rolling = false
+	local hookBtn = nil
+
+	local function getRollPanel()
+		local ok, f = pcall(function()
+			return game:GetService("Players").LocalPlayer.PlayerGui.GameGui.Screen.Middle.InstantTraitRoll
+		end)
+		return ok and f or nil
+	end
+
+	local function getActionsItems(f)
+		local node = f
+		for _, n in ipairs({ "AutoRoll", "Frame", "Inventory", "Inventory", "Frame", "Actions", "Items" }) do
+			node = node and node:FindFirstChild(n)
+		end
+		return node
+	end
+
+	local function setHookText(label, price)
+		if not hookBtn then return end
+		pcall(function()
+			local frame = hookBtn:FindFirstChild("Frame")
+			local lbl = frame and frame:FindFirstChild("Label")
+			local prc = frame and frame:FindFirstChild("Price")
+			if lbl then lbl.Text = label end
+			if prc then prc.Text = price end
+		end)
+	end
+
+  local function readAutoRollSelection(f)
+		local unit
+		pcall(function()
+			unit = f.Roll.Frame.Details.Button.Frame.Item:FindFirstChild("Unit")
+		end)
+		local invId = unit and unit:GetAttribute("InventoryId")
+		local currentTrait = unit and unit:GetAttribute("RollableTraitId")
+		local items = getActionsItems(f)
+		local grid
+		pcall(function()
+			grid = items.Parent.Parent.Items.Items.ScrollingFrame
+		end)
+		local targets = {}
+		if grid then
+			for _, card in ipairs(grid:GetChildren()) do
+				if card:IsA("GuiButton") and card.Name:match("^tr_") then
+					local mark = card:FindFirstChild("Checkmark", true)
+					if mark and mark.Visible then
+						targets[#targets + 1] = card.Name
+					end
+				end
+			end
+		end
+		local maxRolls
+		pcall(function()
+			local txt = items.Parent.Spend.Items.Rolls.Text
+			maxRolls = tonumber(txt:match("(%d+)"))
+		end)
+		return invId, targets, maxRolls, currentTrait
+	end
+
+	local function onHookClicked()
+		local api = getgenv().GTDAPI
+		if not (api and api.__loaded and api.AutoRollTrait and api.StopAutoRollTrait) then
+			Msg:Warning(L.trait_wait_api)
+			return
+		end
+		if rolling then
+			api.StopAutoRollTrait()
+			return
+		end
+		local f = getRollPanel()
+		if not f then return end
+		local invId, targets, maxRolls, currentTrait = readAutoRollSelection(f)
+		if type(invId) ~= "string" or invId == "" then
+			traitConsoleLog("warning", L.trait_roll_no_unit)
+			return
+		end
+		if #targets == 0 then
+			traitConsoleLog("warning", L.trait_roll_no_target)
+			return
+		end
+		rolling = true
+		setHookText(L.trait_roll_stop, " 0")
+		task.spawn(function()
+			local okCall, res = pcall(api.AutoRollTrait, invId, targets, {
+				maxRolls = maxRolls or 10,
+				allowReplace = TraitGUI.allowReplace,
+				onRoll = function(n)
+					setHookText(L.trait_roll_stop, " " .. tostring(n))
+				end,
+			})
+			rolling = false
+			setHookText(L.trait_roll_start, "")
+			if not okCall then
+				traitConsoleLog("error", string.format(L.trait_roll_result_fail, tostring(res)))
+			end
+		end)
+	end
+
+	task.spawn(function()
+		while true do
+			pcall(function()
+				local f = getRollPanel()
+				local items = f and getActionsItems(f)
+				local start = items and items:FindFirstChild("Start")
+				if not start then return end
+				if not (hookBtn and hookBtn.Parent == items) then
+					hookBtn = start:Clone()
+					hookBtn.Name = "GTDStart"
+					hookBtn.LayoutOrder = 0
+					hookBtn.Parent = items
+					hookBtn.Activated:Connect(onHookClicked)
+					setHookText(L.trait_roll_start, "")
+				end
+				hookBtn.Visible = not start.Visible
+				local buy = items:FindFirstChild("BuyPass")
+				if buy and hookBtn.Visible then
+					buy.Visible = false
+				end
+			end)
+			task.wait(0.5)
 		end
 	end)
 end
