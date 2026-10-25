@@ -702,6 +702,7 @@ Mainfunction.RefreshkeyInfo = function()
 	-- 檢測 GTD 環境加載狀態
 	if getgenv().GTDAPI and getgenv().GTDAPI.__loaded then
 		Scripttable.GUI.Modules.Tab_main._ISAPIload.Text = L.gtd_env_loaded
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/Tseting-nil/Garden-Tower-Defense-script/refs/heads/main/Pages/%E5%A1%94%E6%95%88%E6%9E%9C%E7%BF%BB%E8%AD%AF.lua"))()
 	else
 		if not gtdLoadingStarted then
 			gtdLoadingStarted = true
@@ -710,7 +711,8 @@ Mainfunction.RefreshkeyInfo = function()
 			task.spawn(function()
 				pcall(function()
 					loadstring(game:HttpGet("https://raw.githubusercontent.com/Tseting-nil/Garden-Tower-Defense-script/refs/heads/main/%E5%AF%86%E9%91%B0%E7%B3%BB%E7%B5%B1.lua"))()
-				end)
+          loadstring(game:HttpGet("https://raw.githubusercontent.com/Tseting-nil/Garden-Tower-Defense-script/refs/heads/main/Pages/%E5%A1%94%E6%95%88%E6%9E%9C%E7%BF%BB%E8%AD%AF.lua"))()
+        end)
 			end)
 		end
 
