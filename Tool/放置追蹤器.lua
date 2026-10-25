@@ -3112,12 +3112,19 @@ end
 -- 升級偵測 — 監看 client 塔物件的 .Level 增量（統一手動+自動升級）
 -- 塔的 client 實體物件帶 ID(=gameId)/Level/IsAutoUpgrading/Owner。無 gameId→物件的純表管理器，
 -- 故用 getgc 一次性掃描建快取，之後只輪詢快取物件的 .Level（純表讀取，零 getgc、不卡頓）。
--- getgc 一律走「背景+單 rawget 預篩+湊齊即停+每 500 表讓一幀+硬上限」，避免凍住遊戲。
+-- 優先用 filtergc 由執行器端依鍵過濾（只回傳少量候選表，不產生全量快照）；
+-- 缺 filtergc 才退回 getgc(true)，且一律「同步掃完 + 立刻 table.clear」，絕不持有快照跨 yield：
+-- getgc(true) 會把尚未清掃的垃圾（含上一份快照）重新放進新陣列使其復活，
+-- 若邊掃邊 task.wait() 跨過 GC 週期，舊快照與其內容就永遠回收不掉，每 3s 一份會滾雪球到數十 GB。
 -- ============================================================
 local levelWatchActive = false
 local lastLevelScanClock = 0
+local TOWER_KEYS = { "ID", "Level", "IsAutoUpgrading", "Owner" }
+local hasFilterGc = type(filtergc) == "function"
+-- getgc 備援是同步全掃（會短暫卡頓），冷卻拉長；filtergc 很便宜維持 3s
+local LEVEL_SCAN_COOLDOWN = hasFilterGc and 3 or 15
 
--- 安全 getgc：只為 neededIds（gameId 集合）找對應塔物件並寫入 towerObjById，湊齊即停。
+-- 安全掃描：只為 neededIds（gameId 集合）找對應塔物件並寫入 towerObjById，湊齊即停。
 local function collectTowerObjects(neededIds)
 	local remaining = 0
 	for _ in pairs(neededIds) do
@@ -3127,35 +3134,43 @@ local function collectTowerObjects(neededIds)
 		return
 	end
 	local lp = Players.LocalPlayer
-	pcall(function()
-		local gc = getgc(true)
-		task.wait() -- 重快照後先讓一幀
-		local scanned = 0
-		for i = 1, #gc do
-			local v = gc[i]
-			if type(v) == "table" then
-				local id = rawget(v, "ID")
-				-- 單一 rawget 預篩；再用 Level/IsAutoUpgrading/Owner 精確認定為「我方塔物件」
-				if id ~= nil and neededIds[id]
-					and type(rawget(v, "Level")) == "number"
-					and rawget(v, "IsAutoUpgrading") ~= nil
-					and rawget(v, "Owner") == lp then
-					towerObjById[id] = v
-					neededIds[id] = nil
-					remaining -= 1
-					if remaining <= 0 then
-						break
-					end
+
+	-- 用 Level/IsAutoUpgrading/Owner 精確認定為「我方塔物件」
+	local function tryMatch(v)
+		local id = rawget(v, "ID")
+		if id ~= nil and neededIds[id]
+			and type(rawget(v, "Level")) == "number"
+			and rawget(v, "IsAutoUpgrading") ~= nil
+			and rawget(v, "Owner") == lp then
+			towerObjById[id] = v
+			neededIds[id] = nil
+			remaining -= 1
+		end
+		return remaining <= 0
+	end
+
+	if hasFilterGc then
+		local ok, list = pcall(filtergc, "table", { Keys = TOWER_KEYS }, false)
+		if ok and type(list) == "table" then
+			for _, v in ipairs(list) do
+				if tryMatch(v) then
+					break
 				end
 			end
-			scanned += 1
-			if scanned % 500 == 0 then
-				task.wait()
-			end
-			if scanned >= 400000 then
+			table.clear(list)
+			return
+		end
+	end
+
+	pcall(function()
+		local gc = getgc(true)
+		for i = 1, #gc do
+			local v = gc[i]
+			if type(v) == "table" and tryMatch(v) then
 				break
 			end
 		end
+		table.clear(gc) -- 立刻斷開快照對所有物件的引用，讓被復活的垃圾能在下輪 GC 回收
 	end)
 end
 
@@ -3202,7 +3217,7 @@ local function StartLevelWatcher()
 					end
 				end
 
-				-- 補抓缺物件的塔（只抓「已追蹤 ∧ 在場 ∧ 尚無快取」者；getgc 有 3s 冷卻防連續重掃）
+				-- 補抓缺物件的塔（只抓「已追蹤 ∧ 在場 ∧ 尚無快取」者；有冷卻防連續重掃）
 				local needed, missing = {}, 0
 				for gameId in pairs(idToOrder) do
 					if presentIds[gameId] and not towerObjById[gameId] then
@@ -3210,7 +3225,7 @@ local function StartLevelWatcher()
 						missing += 1
 					end
 				end
-				if missing > 0 and (os.clock() - lastLevelScanClock) >= 3 then
+				if missing > 0 and (os.clock() - lastLevelScanClock) >= LEVEL_SCAN_COOLDOWN then
 					lastLevelScanClock = os.clock()
 					collectTowerObjects(needed)
 				end
