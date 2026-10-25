@@ -98,9 +98,8 @@ local alive = true
 -- ============================================================
 -- 塔效果翻譯（與「塔效果翻譯.lua」相同邏輯）
 -- 說明面板顯示的是遊戲資料表中的文字，直接替換資料即可。
--- 與「塔效果翻譯.lua」共用同一份遠端翻譯表（本地不儲存）；本場已翻譯過則略過。
 -- ============================================================
-local TRANSLATION_URL = "https://gist.githubusercontent.com/Tseting-nil/76bf5dc90cc37c46e0a469da6b58e252/raw/%25E8%258A%25B1%25E5%259C%2592%25E5%25A1%2594%25E6%2588%25BF%25E5%25A1%2594%25E7%25BF%25BB%25E8%25AD%25AF%25E8%25A1%25A8"
+local TRANSLATION_URL = "https://raw.githubusercontent.com/Tseting-nil/Garden-Tower-Defense-script/refs/heads/main/Pages/%E5%A1%94%E6%95%88%E6%9E%9C%E7%BF%BB%E8%AD%AF%E8%A1%A8.lua"
 
 -- 執行翻譯表原始碼並回傳結果表；內容無效時回傳 nil
 local function runSource(src)
