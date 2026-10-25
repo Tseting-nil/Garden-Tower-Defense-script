@@ -245,6 +245,7 @@ local Lang = {
 		logSell = "刪除塔 #%d: %s  +%.1fs",
 		logSellUnknown = "刪除塔 [id:%s] (未追蹤)  +%.1fs",
 		logSellAll = "清除全部塔  +%.1fs",
+		logBuyPlot = "購買地塊 #%d  $%d  +%.1fs",
 		logAbility = "塔能力 #%d %s: %s  +%.1fs",
 		logAbilityUnknown = "塔能力 [id:%s] %s (未追蹤)  +%.1fs",
 		logTowerItem = "  #%d %s [id=%s] +%.1fs",
@@ -342,6 +343,7 @@ local Lang = {
 		logSell = "Sell #%d: %s  +%.1fs",
 		logSellUnknown = "Sell [id:%s] (untracked)  +%.1fs",
 		logSellAll = "Sell all towers  +%.1fs",
+		logBuyPlot = "Buy plot #%d  $%d  +%.1fs",
 		logAbility = "Ability #%d %s: %s  +%.1fs",
 		logAbilityUnknown = "Ability [id:%s] %s (untracked)  +%.1fs",
 		logTowerItem = "  #%d %s [id=%s] +%.1fs",
@@ -452,6 +454,7 @@ local GameSpeedRemote = nil
 local GamemodeRemote = nil
 local TowerAbilityRemote = nil
 local SellAllRemote = nil -- 花園塔防：SellAll() 一次清除場上所有塔（InvokeServer 無參數）
+local BuyPlotRemote = nil -- 活動地塊：RemoteEvents.BuyPlot:FireServer(plotId)（RemoteEvent）
 -- 花園塔防：放置塔容器（workspace.Map.Entities），子物件帶 ID attribute = 升級/賣出用的 gameId
 local EntitiesFolder = nil
 
@@ -463,6 +466,7 @@ local upgradeLog = {}
 local sellLog = {}
 local sellAllLog = {} -- 花園塔防：SellAll 一鍵清場（依序保留時間點，重播時清掉當輪所有 order 綁定）
 local skipWaveLog = {}
+local buyPlotLog = {} -- 活動地塊購買（伺服器確認 PlotUnlocked 才記；price = 購買當下 PlotPrice）
 local speedChangeLog = {}
 local abilityLog = {}
 local gameSettingLog = {}
@@ -2120,6 +2124,12 @@ local function writeOp(lines, op)
 		end
 	elseif op.type == "skipwave" then
 		table.insert(lines, string.format("\tGTD.AddSkipWave(%s) -- %s", gate, tag))
+	elseif op.type == "buyplot" then
+		-- 活動地塊：金錢閘門（錄製當下 PlotPrice）；價格未知時退回時間閘門
+		local price = math.max(0, math.floor((op.price or 0) + 0.5))
+		local plotGate = price > 0 and string.format('"%d"', price) or string.format("%.1f", e)
+		table.insert(lines, string.format("\tGTD.AddBuyPlot(%d, %s) -- plot #%d $%d +%.1fs",
+			op.plotId, plotGate, op.plotId, price, e))
 	elseif op.type == "sellall" then
 		-- 一鍵清場（時間閘門；清掉場上全部塔）。重播時 GTD 會清掉當輪所有 order 綁定。
 		table.insert(lines, string.format("\tGTD.AddSellAll(%s) -- sell all %s", gate, tag))
@@ -2181,6 +2191,14 @@ local function buildOperations()
 		table.insert(operations, {
 			type = "skipwave",
 			elapsed = sk.elapsed or 0,
+		})
+	end
+	for _, bp in ipairs(buyPlotLog) do
+		table.insert(operations, {
+			type = "buyplot",
+			plotId = bp.plotId,
+			price = bp.price,
+			elapsed = bp.elapsed or 0,
 		})
 	end
 	for _, sa in ipairs(sellAllLog) do
@@ -2357,7 +2375,7 @@ local function applyTablePriceCorrection(operations)
 end
 
 local function generateScript(mode)
-	if nextOrder <= 1 and #upgradeLog == 0 and #skipWaveLog == 0 and #gameSettingLog == 0 then
+	if nextOrder <= 1 and #upgradeLog == 0 and #skipWaveLog == 0 and #gameSettingLog == 0 and #buyPlotLog == 0 then
 		addLog(T("logNoOps"), Theme.Warning)
 		return nil
 	end
@@ -2891,6 +2909,7 @@ resetBtn.MouseButton1Click:Connect(function()
 	sellLog = {}
 	sellAllLog = {}
 	skipWaveLog = {}
+	buyPlotLog = {}
 	speedChangeLog = {}
 	abilityLog = {}
 	gameSettingLog = {}
@@ -3255,6 +3274,8 @@ local function InitTracker()
 		GamemodeRemote = RF:WaitForChild("PlaceDifficultyVote", 10) -- 難度投票
 		TowerAbilityRemote = RF:FindFirstChild("ActivateUnitAbility")
 		SellAllRemote = RF:FindFirstChild("SellAll") -- 一鍵清場（無參數）
+		local RE = ReplicatedStorage:FindFirstChild("RemoteEvents")
+		BuyPlotRemote = RE and RE:FindFirstChild("BuyPlot") -- 活動地塊（非活動地圖可能無）
 
 		-- 放置塔容器（升級/賣出 gameId 來源）
 		local Map = workspace:WaitForChild("Map", 10)
@@ -3504,6 +3525,44 @@ local function InitTracker()
 			return result
 		end
 
+		-- 活動地塊：BuyPlot:FireServer(plotId)。hook 內只做純 Lua（同 SellAll 的 namecall 禁令，
+		-- GetAttribute 也是 namecall）；讀價格/確認解鎖交給 queueHookTask（hook 外、elevated）。
+		-- 伺服器可能拒絕（沒拿鐮刀/太遠/錢不夠/不相鄰）→ 等 PlotUnlocked 變 true 才記錄。
+		NamecallHandlers.FireServer.BuyPlot = function(args)
+			local plotId = args[1]
+			if type(plotId) ~= "number" or not isGameRunning then
+				return
+			end
+			local elapsed = getElapsed()
+			queueHookTask(function()
+				local map = workspace:FindFirstChild("Map")
+				local folder = map and map:FindFirstChild("CornPlots", true)
+				local model = nil
+				for _, child in ipairs(folder and folder:GetChildren() or {}) do
+					if child:GetAttribute("ModuleId") == plotId then
+						model = child
+						break
+					end
+				end
+				if not model or model:GetAttribute("PlotUnlocked") == true then
+					return
+				end
+				-- 伺服器確認前先讀價格（解鎖後 updatePrices 會把所有地塊漲到下一塊的價）
+				local price = model:GetAttribute("PlotPrice") or 0
+				task.spawn(function()
+					local deadline = os.clock() + 3
+					while model:GetAttribute("PlotUnlocked") ~= true and os.clock() < deadline do
+						task.wait(0.05)
+					end
+					if model:GetAttribute("PlotUnlocked") ~= true or not isGameRunning then
+						return
+					end
+					table.insert(buyPlotLog, { plotId = plotId, price = price, elapsed = elapsed })
+					addLog(T("logBuyPlot"):format(plotId, price, elapsed), Color3.fromRGB(255, 220, 80))
+				end)
+			end)
+		end
+
 		-- 註：自動升級（ToggleAutoUpgrade）不再單獨記錄為 op；其升級效果由 StartLevelWatcher
 		-- 監看 .Level 增量收成普通 upgrade，重播時即為一連串 GTD.AddUpgradeTower。
 
@@ -3579,6 +3638,10 @@ local function InitTracker()
 			local method = getnamecallmethod()
 			if method == "InvokeServer" or method == "invokeserver" then
 				return dispatch(oldNamecall, self, ...)
+			end
+			-- FireServer 只攔 BuyPlot（純 Lua 記錄、不 yield），其餘直接轉發
+			if BuyPlotRemote and (method == "FireServer" or method == "fireServer") and self == BuyPlotRemote then
+				pcall(NamecallHandlers.FireServer.BuyPlot, { ... })
 			end
 			return oldNamecall(self, ...)
 		end

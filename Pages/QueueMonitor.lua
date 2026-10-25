@@ -50,6 +50,7 @@ local i18n = {
 		op_sell = "售出 %s (#%d)",
 		op_ability = "塔能力 %s (#%d)",
 		op_sellall = "清除全部塔",
+		op_buyplot = "購買地塊 #%s",
 		op_skipwave = "手動跳波",
 		op_autoskip_on = "設定自動跳波：開",
 		op_autoskip_off = "設定自動跳波：關",
@@ -80,6 +81,7 @@ local i18n = {
 		op_sell = "Sell %s (#%d)",
 		op_ability = "Ability %s (#%d)",
 		op_sellall = "Sell All Towers",
+		op_buyplot = "Buy Plot #%s",
 		op_skipwave = "Manual Skip Wave",
 		op_autoskip_on = "Set Auto Skip: On",
 		op_autoskip_off = "Set Auto Skip: Off",
@@ -595,6 +597,8 @@ local function initUIList()
 			detailStr = string.format(L.op_ability, tName, op.order)
 		elseif op.type == "sellall" then
 			detailStr = L.op_sellall
+		elseif op.type == "buyplot" then
+			detailStr = string.format(L.op_buyplot, tostring(op.plotId))
 		elseif op.type == "skipwave" then
 			detailStr = L.op_skipwave
 		elseif op.type == "autoskip" then
@@ -847,6 +851,22 @@ local function hookMainfunctions()
 				scrollToActiveOp()
 			end
 			return ok
+		end
+	end
+
+	-- 活動地塊（AddBuyPlot → op.type == "buyplot"）；RawBuyPlot 回 ok, 原因
+	local RawBuyPlot = Mainfunction.RawBuyPlot
+	if RawBuyPlot then
+		Mainfunction.RawBuyPlot = function(...)
+			local ok, reason = RawBuyPlot(...)
+			local Scripttable = getGTD()
+			local op = Scripttable.queue[current_index]
+			if op and op.type == "buyplot" then
+				op.status = ok and "completed" or "failed"
+				moveToNextOp()
+				scrollToActiveOp()
+			end
+			return ok, reason
 		end
 	end
 
