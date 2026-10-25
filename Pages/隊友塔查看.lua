@@ -5,7 +5,8 @@
 【功能】
   1. 點擊地圖上隊友的塔，開啟遊戲原生的塔查看器，可查看等級與數值。
      （查看隊友的塔時會隱藏賣出 / 升級 / 目標按鈕）
-  2. 查看器圖片右上角新增「i」按鈕，開啟塔的效果說明面板（自己的塔也適用）。
+  2. 查看器右側「三條（數據）」按鈕下方新增「i」按鈕，開啟塔的效果說明面板（自己的塔也適用）。
+     按鈕放在 gethui，不寫入遊戲的 PlayerGui；只在查看器開啟時顯示。
      遊戲同時只能開一個面板，開啟說明後查看器會關閉，要看數值再點一次塔即可。
   3. 內建塔效果翻譯：自動把塔 / 敵人 / 詞條的英文說明換成中文。
      語言依 Tsetingnil_script/keysystem.json 的 script_language，英文則保留原文。
@@ -260,37 +261,97 @@ local function openDescription()
 	end)
 end
 
--- 在查看器圖片右上角加上「i」按鈕（已存在則略過）
-local function ensureInfoButton()
-	local img = viewerFrame and viewerFrame:FindFirstChild("Frame")
-	img = img and img:FindFirstChild("Left")
-	img = img and img:FindFirstChild("ImageLabel")
-	if not img or img:FindFirstChild(INFO_BTN_NAME) then
+-- 「i」按鈕放在 gethui 自己的 ScreenGui，不寫進遊戲的 PlayerGui（避免遊戲掃描到不存在的物件）。
+-- 外觀複製查看器原生的「X」按鈕（同底圖 / 陰影 / 描邊 / 字型），改成藍色「i」，
+-- 每幀對齊到原生「三條（Stats）」按鈕正下方；只在查看器 .Visible 時顯示。
+local INFO_COLOR = Color3.fromRGB(45, 150, 245)
+local INFO_STROKE = Color3.fromRGB(20, 60, 120)
+local infoGui = nil
+local infoConn = nil
+
+-- 移除複製來的物件上所有 Tag / Attribute（原生按鈕帶 KeybindButton 標籤與 KeyBind 屬性，
+-- 不清掉會被遊戲的快捷鍵系統綁上）
+local function stripGameMarks(root)
+	local CollectionService = game:GetService("CollectionService")
+	local all = root:GetDescendants()
+	table.insert(all, root)
+	for _, inst in ipairs(all) do
+		for _, tag in ipairs(CollectionService:GetTags(inst)) do
+			CollectionService:RemoveTag(inst, tag)
+		end
+		for name in pairs(inst:GetAttributes()) do
+			inst:SetAttribute(name, nil)
+		end
+	end
+end
+
+local function createInfoButton()
+	if infoGui and infoGui.Parent then
 		return
 	end
-	local btn = Instance.new("TextButton")
-	btn.Name = INFO_BTN_NAME
-	btn.AnchorPoint = Vector2.new(1, 0)
-	btn.Position = UDim2.new(1, -6, 0, 46)
-	btn.Size = UDim2.fromOffset(34, 34)
-	btn.BackgroundColor3 = Color3.fromRGB(80, 140, 240)
-	btn.Text = "i"
-	btn.TextColor3 = Color3.new(1, 1, 1)
-	btn.Font = Enum.Font.GothamBlack
-	btn.TextSize = 22
-	btn.ZIndex = img.ZIndex + 5
-	btn.Parent = img
-	Instance.new("UICorner", btn).CornerRadius = UDim.new(1, 0)
-	local stroke = Instance.new("UIStroke", btn)
-	stroke.Color = Color3.new(0, 0, 0)
-	stroke.Thickness = 2
+	local closeBtn = viewerFrame and viewerFrame:FindFirstChild("Close")
+	local statsBtn = viewerFrame and viewerFrame:FindFirstChild("Stats")
+	local gameGui = viewerFrame and viewerFrame:FindFirstAncestorOfClass("ScreenGui")
+	if not (closeBtn and statsBtn and gameGui) then
+		return
+	end
+
+	infoGui = Instance.new("ScreenGui")
+	infoGui.Name = INFO_BTN_NAME
+	infoGui.ResetOnSpawn = false
+	-- 與遊戲 GameGui 相同的座標設定，AbsolutePosition 才對得上
+	infoGui.IgnoreGuiInset = gameGui.IgnoreGuiInset
+	infoGui.ScreenInsets = gameGui.ScreenInsets
+	infoGui.DisplayOrder = gameGui.DisplayOrder + 1
+	infoGui.Parent = (gethui and gethui()) or game:GetService("CoreGui")
+
+	local btn = closeBtn:Clone()
+	stripGameMarks(btn)
+	btn.Name = "Info"
+	btn.AnchorPoint = Vector2.new(0, 0)
+	btn.ImageColor3 = INFO_COLOR
+	btn.Visible = false
+	for _, d in ipairs(btn:GetDescendants()) do
+		if d:IsA("UIAspectRatioConstraint") then
+			d:Destroy() -- 尺寸改由每幀同步原生按鈕的實際大小
+		elseif d:IsA("UIStroke") then
+			d.Color = INFO_STROKE
+		end
+	end
+	local title = btn:FindFirstChild("Title")
+	if title then
+		title.Text = "i"
+	end
+	btn.Parent = infoGui
 	btn.MouseButton1Click:Connect(openDescription)
+
+	-- 每幀：查看器開著才顯示，位置 = Stats 正下方（間距同 X 與 Stats 之間）
+	infoConn = game:GetService("RunService").RenderStepped:Connect(function()
+		local show = viewerFrame.Visible and gameGui.Enabled
+		btn.Visible = show
+		if not show then
+			return
+		end
+		local sPos, sSize = statsBtn.AbsolutePosition, statsBtn.AbsoluteSize
+		local gap = sPos.Y - closeBtn.AbsolutePosition.Y - closeBtn.AbsoluteSize.Y
+		btn.Size = UDim2.fromOffset(sSize.X, sSize.Y)
+		btn.Position = UDim2.fromOffset(sPos.X, sPos.Y + sSize.Y + gap)
+	end)
 end
 
 local function removeInfoButton()
-	local btn = viewerFrame and viewerFrame:FindFirstChild(INFO_BTN_NAME, true)
-	if btn then
-		btn:Destroy()
+	if infoConn then
+		infoConn:Disconnect()
+		infoConn = nil
+	end
+	if infoGui then
+		infoGui:Destroy()
+		infoGui = nil
+	end
+	-- 舊版放在查看器圖片上的按鈕
+	local old = viewerFrame and viewerFrame:FindFirstChild(INFO_BTN_NAME, true)
+	if old then
+		old:Destroy()
 	end
 end
 
@@ -371,7 +432,7 @@ task.spawn(function()
 		if os.clock() - lastPatch >= 1 then
 			lastPatch = os.clock()
 			pcall(patchTeammateClicks)
-			pcall(ensureInfoButton)
+			pcall(createInfoButton)
 		end
 		task.wait(0.05)
 	end
