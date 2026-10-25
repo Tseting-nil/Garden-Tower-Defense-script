@@ -4,9 +4,10 @@ if not getgenv().NotificationModule then
 end
 
 if not getgenv().MOVEAPI then
-  local MoveAPI = loadstring(game:HttpGet("https://gist.githubusercontent.com/Tseting-nil/494a4830fa6d3466596e4e01ca25bdee/raw/15a370f3f09720e1359601e05da6d9e0a24bcc23/%25E5%25B7%25A1%25E8%25B7%25AF%25E6%25A8%25A1%25E7%25B5%2584"))()
+  local MoveAPI = loadstring(game:HttpGet("https://gist.githubusercontent.com/Tseting-nil/494a4830fa6d3466596e4e01ca25bdee/raw/140ff1a64939d3ecec9ef11858dd2024bcb3bc7a/%25E5%25B7%25A1%25E8%25B7%25AF%25E6%25A8%25A1%25E7%25B5%2584"))()
   MoveAPI:SetJumpEnabled(false)
-  MoveAPI:SetDirectMovementDistance(500)
+  MoveAPI:SetDirectMovementDistance(30)
+  MoveAPI:SetPathVisualization(false) -- 新版預設會畫路徑點
   getgenv().MOVEAPI = MoveAPI
 end
 local Move = getgenv().MOVEAPI
