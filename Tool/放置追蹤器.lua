@@ -476,6 +476,7 @@ local gameSettingLog = {}
 local towerObjById = {}      -- gameId -> client 塔實體物件（getgc 一次性快取）
 local lastLevelByOrder = {}  -- order -> 上次觀測到的等級（放置時 = 1）
 local lastDetectedSpeed = 1
+local diffVoteLogged = nil -- 本局已記錄過的難度投票（API 開局前會每 1.5s 重送投票，只記一次）；局結束 / 重置時清空
 local towerUUIDData = {}
 
 local gameStartAutoSkipWave = false
@@ -2915,6 +2916,7 @@ resetBtn.MouseButton1Click:Connect(function()
 	gameSettingLog = {}
 	gameStartAutoSkipWave = false
 	lastDetectedSpeed = 1
+	diffVoteLogged = nil
 	isGameRunning = false
 	gameStartTime = nil
 	gameEndElapsed = nil
@@ -3285,12 +3287,13 @@ local function InitTracker()
 		PlaceTowerRemote = RF:WaitForChild("PlaceUnit", 10)
 		SellTowerRemote = RF:WaitForChild("SellUnit", 10)
 		SkipWaveRemote = RF:WaitForChild("SkipWave", 10)
-		GameSpeedRemote = RF:WaitForChild("ChangeTickSpeed", 10)
 		GamemodeRemote = RF:WaitForChild("PlaceDifficultyVote", 10) -- 難度投票
 		TowerAbilityRemote = RF:FindFirstChild("ActivateUnitAbility")
 		SellAllRemote = RF:FindFirstChild("SellAll") -- 一鍵清場（無參數）
 		local RE = ReplicatedStorage:FindFirstChild("RemoteEvents")
 		BuyPlotRemote = RE and RE:FindFirstChild("BuyPlot") -- 活動地塊（非活動地圖可能無）
+		-- 變速已改成 RemoteEvent（FireServer(speed)），舊的 RemoteFunctions.ChangeTickSpeed 已移除
+		GameSpeedRemote = RE and RE:FindFirstChild("ChangeTickSpeed")
 
 		-- 放置塔容器（升級/賣出 gameId 來源）
 		local Map = workspace:WaitForChild("Map", 10)
@@ -3509,7 +3512,8 @@ local function InitTracker()
 			return result
 		end
 
-		NamecallHandlers.InvokeServer.GameSpeed = function(_, args, result)
+		-- 變速：RemoteEvents.ChangeTickSpeed:FireServer(speed)。hook 內只做純 Lua 記錄（同 BuyPlot），result 為 nil。
+		NamecallHandlers.FireServer.GameSpeed = function(_, args, result)
 			local speed = tonumber(args[1]) or 1
 
 			if isGameRunning and speed ~= lastDetectedSpeed then
@@ -3534,7 +3538,11 @@ local function InitTracker()
 			gameSettings.difficulty = difficulty
 			gameSettings.difficultyId = args[1] -- 原始 id（dif_*），重播投票用
 			queueHookTask(function()
-				addLog(T("logDiffStart"):format(difficulty), Color3.fromRGB(150, 200, 255))
+				-- 同一局重複的投票（API 開局重試）只記第一次；難度改了才再記
+				if diffVoteLogged ~= difficulty then
+					diffVoteLogged = difficulty
+					addLog(T("logDiffStart"):format(difficulty), Color3.fromRGB(150, 200, 255))
+				end
 				updateInfoLabel()
 			end)
 			return result
@@ -3618,11 +3626,6 @@ local function InitTracker()
 					local args = { ... }
 					NamecallHandlers.InvokeServer.SkipWave(self, args, res[1])
 					return table.unpack(res, 1, res.n)
-				elseif self == GameSpeedRemote then
-					local res = table.pack(oldNamecall(self, ...))
-					local args = { ... }
-					NamecallHandlers.InvokeServer.GameSpeed(self, args, res[1])
-					return table.unpack(res, 1, res.n)
 				elseif self == GamemodeRemote then
 					local res = table.pack(oldNamecall(self, ...))
 					local args = { ... }
@@ -3654,9 +3657,13 @@ local function InitTracker()
 			if method == "InvokeServer" or method == "invokeserver" then
 				return dispatch(oldNamecall, self, ...)
 			end
-			-- FireServer 只攔 BuyPlot（純 Lua 記錄、不 yield），其餘直接轉發
-			if BuyPlotRemote and (method == "FireServer" or method == "fireServer") and self == BuyPlotRemote then
-				pcall(NamecallHandlers.FireServer.BuyPlot, { ... })
+			-- FireServer 只攔 BuyPlot / 變速（純 Lua 記錄、不 yield），其餘直接轉發
+			if method == "FireServer" or method == "fireServer" then
+				if BuyPlotRemote and self == BuyPlotRemote then
+					pcall(NamecallHandlers.FireServer.BuyPlot, { ... })
+				elseif GameSpeedRemote and self == GameSpeedRemote then
+					pcall(NamecallHandlers.FireServer.GameSpeed, self, { ... }, nil)
+				end
 			end
 			return oldNamecall(self, ...)
 		end
@@ -3757,6 +3764,7 @@ local function InitTracker()
 					gameEndElapsed = endElapsed
 					isGameRunning = false
 					gameStartTime = nil
+					diffVoteLogged = nil -- 下一局的難度投票重新記錄
 					stopAbilityRemoteTriggers()
 					addLog(
 						T("logGameEnd"):format(math.floor(endElapsed / 60), math.floor(endElapsed % 60), endElapsed),
