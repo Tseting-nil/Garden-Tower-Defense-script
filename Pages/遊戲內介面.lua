@@ -1,3 +1,26 @@
+-- ===== 輸出統一出口 =====
+if not getgenv().GTD_Log then
+	getgenv().GTD_LogBuffer = {}
+	getgenv().GTD_Log = function(level, ...)
+		local parts = table.pack(...)
+		for i = 1, parts.n do
+			parts[i] = tostring(parts[i])
+		end
+		local line = { level = level, text = table.concat(parts, " "), at = os.date("%H:%M:%S") }
+		local buf = getgenv().GTD_LogBuffer
+		buf[#buf + 1] = line
+		if #buf > 300 then
+			table.remove(buf, 1)
+		end
+		local sink = getgenv().GTD_LogSink
+		if sink then
+			pcall(sink, line)
+		end
+	end
+end
+local print = function(...) getgenv().GTD_Log("info", ...) end
+local warn = function(...) getgenv().GTD_Log("warn", ...) end
+
 -- 側邊通知模組
 if not getgenv().NotificationModule then
 	loadstring(game:HttpGet("https://gist.githubusercontent.com/Tseting-nil/08653e6aa9fc12a9f097bfb10e6654e7/raw/00001d614d928fc5dafce59133a012dd78419afd/%25E5%2581%25B4%25E9%2582%258A%25E9%2580%259A%25E7%259F%25A5%25E6%25A8%25A1%25E7%25B5%2584.lua"))()
@@ -57,6 +80,7 @@ local i18n = {
 		tab_playinfo   = "玩家資訊",
 		tab_localscript = "本地腳本",
 		tab_event      = "Event",
+		tab_log        = "日誌",
 		event_collect_section = "自動撿取",
 		event_collect_toggle = "自動撿取（Lucky Block／蛋／鑽石…）",
 		event_collect_started = "自動撿取已啟動",
@@ -178,6 +202,7 @@ local i18n = {
 		tab_playinfo   = "Player Info",
 		tab_localscript = "Local Script",
 		tab_event      = "Event",
+		tab_log        = "Log",
 		event_collect_section = "Auto Collect",
 		event_collect_toggle = "Auto Collect (Lucky Block / Egg / Diamond...)",
 		event_collect_started = "Auto Collect started",
@@ -325,7 +350,8 @@ for _, Name in ipairs({
 	L.tab_playinfo,
 	L.tab_localscript,
 	L.tab_settings,
-	L.tab_event
+	L.tab_event,
+	L.tab_log
 }) do
 	local Tab = TabsWindow:CreateTab({
 		Name = Name
@@ -370,6 +396,35 @@ local Tab_event = Tabs[5]:ScrollingCanvas({
 	Fill = true,
 	UiPadding = UDim.new(0, 0)
 })
+
+-- ===== 日誌分頁：腳本所有 print / warn 的輸出出口（不寫入 Roblox console，避免被遊戲偵測特殊字元後踢出）=====
+do
+	local LogConsole = Tabs[6]:Console({
+		ReadOnly   = true,
+		AutoScroll = true,
+		RichText   = true,
+		MaxLines   = 200,
+		Border     = true,
+		Size       = UDim2.new(1, 0, 0, 200),
+	})
+	local LOG_COLORS = { info = "#d0d0d0", warn = "#ffb347", error = "#ff6b6b" }
+	local function appendLogLine(line)
+		local text = tostring(line.text):gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;")
+		LogConsole:AppendText(string.format("<font color='%s'>[%s] %s</font>",
+			LOG_COLORS[line.level] or LOG_COLORS.info, tostring(line.at or ""), text))
+	end
+	-- 先補上 UI 建立前累積的緩衝，再接上即時輸出
+	for _, line in ipairs(getgenv().GTD_LogBuffer or {}) do
+		pcall(appendLogLine, line)
+	end
+	getgenv().GTD_LogSink = function(line)
+		if getgenv().GTD_UI_InstanceId ~= myInstanceId then
+			getgenv().GTD_LogSink = nil -- 舊實例的 UI 已被新實例取代
+			return
+		end
+		appendLogLine(line)
+	end
+end
 
 -- ===== 設置分頁：密鑰剩餘時間 + 即時更新開關 =====
 local SETTINGS_API_VAR = "Tsetingnil_script/keysystem.json"

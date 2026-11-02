@@ -1,3 +1,26 @@
+-- ===== 輸出統一出口 =====
+if not getgenv().GTD_Log then
+	getgenv().GTD_LogBuffer = {}
+	getgenv().GTD_Log = function(level, ...)
+		local parts = table.pack(...)
+		for i = 1, parts.n do
+			parts[i] = tostring(parts[i])
+		end
+		local line = { level = level, text = table.concat(parts, " "), at = os.date("%H:%M:%S") }
+		local buf = getgenv().GTD_LogBuffer
+		buf[#buf + 1] = line
+		if #buf > 300 then
+			table.remove(buf, 1)
+		end
+		local sink = getgenv().GTD_LogSink
+		if sink then
+			pcall(sink, line)
+		end
+	end
+end
+local print = function(...) getgenv().GTD_Log("info", ...) end
+local warn = function(...) getgenv().GTD_Log("warn", ...) end
+
 -- ============================================================
 --                 花園塔房 | 佇列監視器 GUI (Queue Monitor)
 -- ============================================================
@@ -49,6 +72,7 @@ local i18n = {
 		op_upgrade = "升級 %s (#%d)",
 		op_sell = "售出 %s (#%d)",
 		op_ability = "塔能力 %s (#%d)",
+		op_targeting = "調整策略 %s (#%d) → %s",
 		op_sellall = "清除全部塔",
 		op_buyplot = "購買地塊 #%s",
 		op_skipwave = "手動跳波",
@@ -80,6 +104,7 @@ local i18n = {
 		op_upgrade = "Upgrade %s (#%d)",
 		op_sell = "Sell %s (#%d)",
 		op_ability = "Ability %s (#%d)",
+		op_targeting = "Targeting %s (#%d) → %s",
 		op_sellall = "Sell All Towers",
 		op_buyplot = "Buy Plot #%s",
 		op_skipwave = "Manual Skip Wave",
@@ -595,6 +620,9 @@ local function initUIList()
 		elseif op.type == "ability" then
 			local tName = getTowerNameForOrder(op.order)
 			detailStr = string.format(L.op_ability, tName, op.order)
+		elseif op.type == "targeting" then
+			local tName = getTowerNameForOrder(op.order)
+			detailStr = string.format(L.op_targeting, tName, op.order, ({ "First", "Last", "Central", "Weakest", "Strongest", "Closest", "Random" })[op.mode] or tostring(op.mode))
 		elseif op.type == "sellall" then
 			detailStr = L.op_sellall
 		elseif op.type == "buyplot" then

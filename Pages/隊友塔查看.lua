@@ -1,3 +1,26 @@
+-- ===== 輸出統一出口 =====
+if not getgenv().GTD_Log then
+	getgenv().GTD_LogBuffer = {}
+	getgenv().GTD_Log = function(level, ...)
+		local parts = table.pack(...)
+		for i = 1, parts.n do
+			parts[i] = tostring(parts[i])
+		end
+		local line = { level = level, text = table.concat(parts, " "), at = os.date("%H:%M:%S") }
+		local buf = getgenv().GTD_LogBuffer
+		buf[#buf + 1] = line
+		if #buf > 300 then
+			table.remove(buf, 1)
+		end
+		local sink = getgenv().GTD_LogSink
+		if sink then
+			pcall(sink, line)
+		end
+	end
+end
+local print = function(...) getgenv().GTD_Log("info", ...) end
+local warn = function(...) getgenv().GTD_Log("warn", ...) end
+
 --[[
 ================================================================
                   花園塔防 GTD｜隊友塔查看

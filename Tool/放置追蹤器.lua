@@ -1,6 +1,5 @@
 repeat
 	task.wait(1)
-	print("等待遊戲加載中...")
 until game:GetService("Players").LocalPlayer.PlayerGui.TeleportGui.Enabled == false
 task.wait(1)
 
@@ -225,7 +224,7 @@ local Lang = {
 		logRunPhase1 = "▶ 執行 Phase1: %s",
 		logRunFailed = "❌ 執行失敗: %s",
 		logCopyOk = "✅ 腳本已複製到剪貼板！",
-		logCopyConsole = "⚠️ 腳本已輸出到控制台（F9查看）",
+		logCopyConsole = "⚠️ 剪貼簿不可用，腳本已存為 copy_fallback.lua",
 		logInvalidName = "⚠️ 請輸入有效的腳本名稱",
 		logReset = "🔄 追蹤器已重置",
 		logTowerListHdr = "=== 塔追蹤清單 ===",
@@ -240,14 +239,18 @@ local Lang = {
 		logStarted = "🎉 追蹤系統已啟動！地圖: %s  難易度: %s  效果: %s",
 		logInitFailed = "❌ 追蹤系統初始化失敗（可能不在遊戲中）",
 		logPlaceTower = "放置塔 #%d: %s  +%.1fs",
+		logPlaceTowerCost = "放置塔 #%d: %s  $%d",
 		logPlaceFailed = "⚠️ 放置塔失敗: %s (伺服器拒絕)",
 		logUpgradeLvl = "升級 #%d: %s → Lv.%d (+%d) +%.1fs",
+		logUpgradeLvlCost = "升級 #%d: %s → Lv.%d (+%d) $%d",
 		logSell = "刪除塔 #%d: %s  +%.1fs",
 		logSellUnknown = "刪除塔 [id:%s] (未追蹤)  +%.1fs",
 		logSellAll = "清除全部塔  +%.1fs",
 		logBuyPlot = "購買地塊 #%d  $%d  +%.1fs",
 		logAbility = "塔能力 #%d %s: %s  +%.1fs",
 		logAbilityUnknown = "塔能力 [id:%s] %s (未追蹤)  +%.1fs",
+		logTargeting = "調整策略 #%d %s → %s  +%.1fs",
+		logTargetingUnknown = "調整策略 [id:%s] → %s (未追蹤)  +%.1fs",
 		logTowerItem = "  #%d %s [id=%s] +%.1fs",
 		abilityFmt = "能力: %s / 冷卻: %ds",
 		abilityReady = "🟢 就緒",
@@ -323,7 +326,7 @@ local Lang = {
 		logRunPhase1 = "▶ Run Phase1: %s",
 		logRunFailed = "❌ Run failed: %s",
 		logCopyOk = "✅ Script copied to clipboard!",
-		logCopyConsole = "⚠️ Script printed to console (F9)",
+		logCopyConsole = "⚠️ Clipboard unavailable, script saved as copy_fallback.lua",
 		logInvalidName = "⚠️ Please enter a valid script name",
 		logReset = "🔄 Tracker reset",
 		logTowerListHdr = "=== Tower List ===",
@@ -338,14 +341,18 @@ local Lang = {
 		logStarted = "🎉 Tracker started! Map: %s  Difficulty: %s  Modifier: %s",
 		logInitFailed = "❌ Tracker init failed (not in game?)",
 		logPlaceTower = "Place #%d: %s  +%.1fs",
+		logPlaceTowerCost = "Place #%d: %s  $%d",
 		logPlaceFailed = "⚠️ Place failed: %s (rejected)",
 		logUpgradeLvl = "Upgrade #%d: %s → Lv.%d (+%d) +%.1fs",
+		logUpgradeLvlCost = "Upgrade #%d: %s → Lv.%d (+%d) $%d",
 		logSell = "Sell #%d: %s  +%.1fs",
 		logSellUnknown = "Sell [id:%s] (untracked)  +%.1fs",
 		logSellAll = "Sell all towers  +%.1fs",
 		logBuyPlot = "Buy plot #%d  $%d  +%.1fs",
 		logAbility = "Ability #%d %s: %s  +%.1fs",
 		logAbilityUnknown = "Ability [id:%s] %s (untracked)  +%.1fs",
+		logTargeting = "Targeting #%d %s → %s  +%.1fs",
+		logTargetingUnknown = "Targeting [id:%s] → %s (untracked)  +%.1fs",
 		logTowerItem = "  #%d %s [id=%s] +%.1fs",
 		abilityFmt = "Ability: %s / Cooldown: %ds",
 		abilityReady = "🟢 Ready",
@@ -455,6 +462,17 @@ local GamemodeRemote = nil
 local TowerAbilityRemote = nil
 local SellAllRemote = nil -- 花園塔防：SellAll() 一次清除場上所有塔（InvokeServer 無參數）
 local BuyPlotRemote = nil -- 活動地塊：RemoteEvents.BuyPlot:FireServer(plotId)（RemoteEvent）
+-- Luau 單一函式 local 上限 200：本次新增的輔助全放進 Ext 表，不再佔用主程式 local 名額。
+-- Ext.TargetingRemote = 塔策略 RemoteEvents.Entity_ChangeTargetingMode:FireServer(gameId, mode)
+-- Ext.targetingLog    = 塔策略記錄 { gameId, order, mode, elapsed }
+local Ext = { targetingLog = {} }
+-- 追蹤器自帶 UI 日誌；console 一律不輸出（部分遊戲偵測 console 特殊字元會踢人），僅轉送 GTD_Log 緩衝
+function Ext.log(level, ...)
+	local sink = getgenv().GTD_Log
+	if sink then
+		pcall(sink, level, ...)
+	end
+end
 -- 花園塔防：放置塔容器（workspace.Map.Entities），子物件帶 ID attribute = 升級/賣出用的 gameId
 local EntitiesFolder = nil
 
@@ -469,6 +487,11 @@ local skipWaveLog = {}
 local buyPlotLog = {} -- 活動地塊購買（伺服器確認 PlotUnlocked 才記；price = 購買當下 PlotPrice）
 local speedChangeLog = {}
 local abilityLog = {}
+-- 塔策略模式名稱（遊戲 Units.Behaviors.unit_base.TargetingModeEnum）
+Ext.TARGETING_MODE_NAMES = { "First", "Last", "Central", "Weakest", "Strongest", "Closest", "Random" }
+function Ext.targetingModeName(mode)
+	return Ext.TARGETING_MODE_NAMES[mode] or tostring(mode)
+end
 local gameSettingLog = {}
 -- 花園塔防：升級偵測改用「監看每塔 client 物件的 .Level 增量」，統一收手動+自動升級
 -- （取代 UpgradeUnit/ToggleAutoUpgrade remote hook）。自動升級為伺服器端執行、client 不發 UpgradeUnit，
@@ -591,7 +614,7 @@ local function flushHookTaskQueue()
 	for _, fn in ipairs(queued) do
 		local ok, err = pcall(fn)
 		if not ok then
-			warn("[Queued Hook Error]", err)
+			Ext.log("warn", "[Queued Hook Error]", err)
 		end
 	end
 end
@@ -2154,6 +2177,15 @@ local function writeOp(lines, op)
 			table.insert(lines, string.format("\t-- WARN: ability untracked tower [ID:%s] %s %s",
 				tostring(op.gameId), tostring(op.abilityName or ""), tag))
 		end
+	elseif op.type == "targeting" then
+		-- 塔策略：時間閘門；重播靠 order 反查當輪 gameId。未追蹤的塔只留警告註解。
+		if op.order then
+			table.insert(lines, string.format("\tGTD.AddSetTargeting(%d, %d, %s) -- #%d %s %s",
+				op.order, op.mode, gate, op.order, Ext.targetingModeName(op.mode), tag))
+		else
+			table.insert(lines, string.format("\t-- WARN: targeting untracked tower [ID:%s] %s %s",
+				tostring(op.gameId), Ext.targetingModeName(op.mode), tag))
+		end
 	end
 	-- autoupgrade 已移除：自動升級由 Level 監看器收成普通 upgrade，走上面的 upgrade 分支
 end
@@ -2224,6 +2256,15 @@ local function buildOperations()
 			abilityName = ab.abilityName,
 		})
 	end
+	for _, tg in ipairs(Ext.targetingLog) do
+		table.insert(operations, {
+			type = "targeting",
+			order = tg.order,
+			elapsed = tg.elapsed or 0,
+			gameId = tg.gameId,
+			mode = tg.mode,
+		})
+	end
 	for _, gs in ipairs(gameSettingLog) do
 		table.insert(operations, {
 			type = "gamesetting",
@@ -2247,7 +2288,7 @@ local function buildOperations()
 	for i, op in ipairs(operations) do
 		op._i = i
 		local key = op.elapsed or 0
-		if (op.type == "upgrade" or op.type == "sell" or op.type == "towerability") and op.order then
+		if (op.type == "upgrade" or op.type == "sell" or op.type == "towerability" or op.type == "targeting") and op.order then
 			local pe = placeElapsed[op.order]
 			if pe and key < pe then key = pe + 0.001 end
 		end
@@ -2315,6 +2356,19 @@ local function getUnitCost(unitId, level)
 	return (type(up) == "table" and type(up.Cost) == "number") and up.Cost or nil
 end
 
+-- 升級日誌顯示用：從 fromLvl 升到 toLvl 的牌價總和（含附魔倍率）；查不到回 nil
+function Ext.getUpgradeCostSum(unitId, fromLvl, toLvl, mult)
+	local sum = 0
+	for lvl = fromLvl + 1, toLvl do
+		local price = getUnitCost(unitId, lvl)
+		if not price then
+			return nil
+		end
+		sum += math.max(0, math.floor(price * (mult or 1) + 0.5))
+	end
+	return sum
+end
+
 -- 動態補齊能力資料：GTD_ABILITY_DATA 是一次性 dump（33 塔），遊戲後續新增的能力塔
 -- （如 unit_plasma_blaster）不在表內 → 控制台不顯示、log 名稱退回 unit_id。
 -- 這裡對「場上實際出現」的未知塔惰性 require 其單位設定讀 UnitConfig.PlayerTriggeredAbility，
@@ -2345,7 +2399,7 @@ local function ensureAbilityData(unitId)
 		if pta.ReadyOnSummon then entry.ReadyOnSummon = true end
 		GTD_ABILITY_DATA[unitId] = entry
 		towersWithAbility[unitId] = { unitId }
-		print(string.format("[GTD Tracker] 動態補上能力塔 %s → %s (CD %ss)", unitId, entry.Name, tostring(entry.Cooldown)))
+		Ext.log("info", string.format("[GTD Tracker] 動態補上能力塔 %s → %s (CD %ss)", unitId, entry.Name, tostring(entry.Cooldown)))
 		return entry
 	end
 	return nil
@@ -2467,7 +2521,6 @@ local function generateScript(mode)
 		table.insert(fullLines, string.format("\tGTD.AddEnd(%.1f)", gameEndElapsed))
 	end
 	table.insert(fullLines, "\tGTD.ExecuteQueue()")
-	table.insert(fullLines, '\tprint("[GTD] Queue loaded wait start!!")')
 	table.insert(fullLines, "end")
 
 	local fullScriptContent = table.concat(fullLines, "\n")
@@ -2820,15 +2873,13 @@ copyBtn.MouseButton1Click:Connect(function()
 			addLog(T("logCopyOk"), Color3.fromRGB(100, 255, 100))
 			copyBtn.Text = T("btnCopied")
 			copyBtn.BackgroundColor3 = Color3.fromRGB(0, 180, 0)
-			print("\n========== Generated Script ==========")
-			print(s)
-			print("=======================================\n")
 			task.wait(2)
 			copyBtn.Text = T("btnCopy")
 			copyBtn.BackgroundColor3 = Theme.Success
 		else
+			-- 剪貼簿不可用：改存檔（不輸出到 console）
+			pcall(saveScriptToFile, "copy_fallback", s)
 			addLog(T("logCopyConsole"), Theme.Warning)
-			print(s)
 		end
 	end
 end)
@@ -2913,6 +2964,7 @@ resetBtn.MouseButton1Click:Connect(function()
 	buyPlotLog = {}
 	speedChangeLog = {}
 	abilityLog = {}
+	Ext.targetingLog = {}
 	gameSettingLog = {}
 	gameStartAutoSkipWave = false
 	lastDetectedSpeed = 1
@@ -3035,13 +3087,31 @@ end
 
 -- 單次掃描 workspace.Map.Entities，找位置吻合且非 enemy_ 的未綁定 entity，讀其 ID attribute。
 -- 回傳 gameId（數字）或 nil。
-local function findUnboundEntityAt(targetPos)
+-- MovesAround 單位（如 unit_soulshard）會被遊戲包一層同名空 Model：ID 在內層同名實體，
+-- 內層會自己移動；原放置點留在同包裝內的 MovingSpawnVisual。故 ID 外層讀不到時往內層找。
+function Ext.getEntityId(child)
+	local idVal = child:GetAttribute("ID")
+	if type(idVal) == "number" then
+		return idVal
+	end
+	local inner = child:FindFirstChild(child.Name)
+	idVal = inner and inner:GetAttribute("ID")
+	return type(idVal) == "number" and idVal or nil
+end
+
+-- 放置點座標：有 MovingSpawnVisual 的包裝以它為準（實體本身已跟著玩家/瞬移）
+function Ext.getEntityHomePosition(child)
+	local visual = child:FindFirstChild("MovingSpawnVisual")
+	return getModelPivotPosition(visual or child)
+end
+
+local function findUnboundEntityAt(targetPos, unitName)
 	if not EntitiesFolder then return nil end
 	for _, child in ipairs(EntitiesFolder:GetChildren()) do
-		if not child.Name:match("^enemy_") then
-			local idVal = child:GetAttribute("ID")
-			if type(idVal) == "number" and not idToOrder[idVal] then
-				local childPos = getModelPivotPosition(child)
+		if not child.Name:match("^enemy_") and (not unitName or child.Name == unitName) then
+			local idVal = Ext.getEntityId(child)
+			if idVal and not idToOrder[idVal] then
+				local childPos = Ext.getEntityHomePosition(child)
 				if childPos and positionsClose(childPos, targetPos, 0.6) then
 					return idVal, child
 				end
@@ -3061,7 +3131,7 @@ local function processPendingPlacements()
 	local now = os.clock()
 	for i = #pendingPlacements, 1, -1 do
 		local job = pendingPlacements[i]
-		local gameId = findUnboundEntityAt(job.targetPos)
+		local gameId = findUnboundEntityAt(job.targetPos, job.unitName)
 		if gameId then
 			table.remove(pendingPlacements, i)
 			local elapsed = job.elapsed or getElapsed()
@@ -3093,9 +3163,13 @@ local function processPendingPlacements()
 			orderToInfo[nextOrder] = info
 			idToOrder[gameId] = nextOrder
 			lastLevelByOrder[nextOrder] = 1 -- 放置即 1 級；之後由 Level 監看器偵測升級
-			local placeLogText = T("logPlaceTower"):format(nextOrder, job.unitName, elapsed)
-			if ScriptSettings.CostMode and info.cost and info.cost > 0 then
-				placeLogText = placeLogText .. string.format("  $%d", info.cost)
+			-- 成本版：日誌以牌價($)顯示（與生成腳本的金錢閘門一致）；查不到牌價才退回時間顯示
+			local placePrice = ScriptSettings.CostMode and getUnitCost(job.unitName, 1) or nil
+			local placeLogText
+			if placePrice then
+				placeLogText = T("logPlaceTowerCost"):format(nextOrder, job.unitName, math.floor(placePrice + 0.5))
+			else
+				placeLogText = T("logPlaceTower"):format(nextOrder, job.unitName, elapsed)
 			end
 			addLog(placeLogText, Color3.fromRGB(100, 255, 100))
 			nextOrder += 1
@@ -3211,8 +3285,8 @@ local function StartLevelWatcher()
 				if Entities then
 					for _, child in ipairs(Entities:GetChildren()) do
 						if not child.Name:match("^enemy_") then
-							local idVal = child:GetAttribute("ID")
-							if type(idVal) == "number" then
+							local idVal = Ext.getEntityId(child)
+							if idVal then
 								presentIds[idVal] = true
 							end
 						end
@@ -3261,10 +3335,16 @@ local function StartLevelWatcher()
 									end
 									local info = orderToInfo[order]
 									if info then
-										addLog(
-											T("logUpgradeLvl"):format(order, info.UnitType or "?", lvl, k, elapsed),
-											Color3.fromRGB(255, 255, 100)
-										)
+										local upPrice = ScriptSettings.CostMode
+											and Ext.getUpgradeCostSum(info.UnitType, last, lvl, info.upgradeCostMult)
+											or nil
+										local upText
+										if upPrice then
+											upText = T("logUpgradeLvlCost"):format(order, info.UnitType or "?", lvl, k, upPrice)
+										else
+											upText = T("logUpgradeLvl"):format(order, info.UnitType or "?", lvl, k, elapsed)
+										end
+										addLog(upText, Color3.fromRGB(255, 255, 100))
 									end
 								end
 							end
@@ -3280,7 +3360,7 @@ end
 -- 初始化追蹤系統
 -- ============================================================
 local function InitTracker()
-	print("[GTD Tracker] Initializing...")
+	Ext.log("info", "[GTD Tracker] Initializing...")
 	local ok, err = pcall(function()
 		-- 花園塔防：remote 全在 ReplicatedStorage.RemoteFunctions（扁平，皆 InvokeServer）
 		local RF = ReplicatedStorage:WaitForChild("RemoteFunctions", 10)
@@ -3294,6 +3374,7 @@ local function InitTracker()
 		BuyPlotRemote = RE and RE:FindFirstChild("BuyPlot") -- 活動地塊（非活動地圖可能無）
 		-- 變速已改成 RemoteEvent（FireServer(speed)），舊的 RemoteFunctions.ChangeTickSpeed 已移除
 		GameSpeedRemote = RE and RE:FindFirstChild("ChangeTickSpeed")
+		Ext.TargetingRemote = RE and RE:FindFirstChild("Entity_ChangeTargetingMode")
 
 		-- 放置塔容器（升級/賣出 gameId 來源）
 		local Map = workspace:WaitForChild("Map", 10)
@@ -3533,6 +3614,32 @@ local function InitTracker()
 			return result
 		end
 
+		-- 塔策略：Entity_ChangeTargetingMode:FireServer(gameId, mode)。hook 內只做純 Lua 記錄
+		-- （idToOrder 查表、getElapsed 皆純 Lua）；addLog 交給 queueHookTask（hook 外、elevated）。
+		-- 同一塔連續改到相同模式（或伺服器端自動同步子單位時的重複送出）不重複記。
+		NamecallHandlers.FireServer.Targeting = function(args)
+			local gameId = tonumber(args[1])
+			local mode = tonumber(args[2])
+			if not gameId or not mode or not isGameRunning then
+				return
+			end
+			local order = idToOrder[gameId]
+			local last = Ext.targetingLog[#Ext.targetingLog]
+			local elapsed = getElapsed()
+			if last and last.gameId == gameId and last.mode == mode and elapsed - (last.elapsed or 0) < 0.2 then
+				return
+			end
+			table.insert(Ext.targetingLog, { gameId = gameId, order = order, mode = mode, elapsed = elapsed })
+			queueHookTask(function()
+				local info = order and orderToInfo[order]
+				if info then
+					addLog(T("logTargeting"):format(info.order, info.UnitType, Ext.targetingModeName(mode), elapsed), Color3.fromRGB(120, 220, 255))
+				else
+					addLog(T("logTargetingUnknown"):format(tostring(gameId), Ext.targetingModeName(mode), elapsed), Color3.fromRGB(120, 220, 255))
+				end
+			end)
+		end
+
 		NamecallHandlers.InvokeServer.Difficulty = function(_, args, result)
 			local difficulty = normalizeDifficulty(args[1])
 			gameSettings.difficulty = difficulty
@@ -3657,12 +3764,14 @@ local function InitTracker()
 			if method == "InvokeServer" or method == "invokeserver" then
 				return dispatch(oldNamecall, self, ...)
 			end
-			-- FireServer 只攔 BuyPlot / 變速（純 Lua 記錄、不 yield），其餘直接轉發
+			-- FireServer 只攔 BuyPlot / 變速 / 塔策略（純 Lua 記錄、不 yield），其餘直接轉發
 			if method == "FireServer" or method == "fireServer" then
 				if BuyPlotRemote and self == BuyPlotRemote then
 					pcall(NamecallHandlers.FireServer.BuyPlot, { ... })
 				elseif GameSpeedRemote and self == GameSpeedRemote then
 					pcall(NamecallHandlers.FireServer.GameSpeed, self, { ... }, nil)
+				elseif Ext.TargetingRemote and self == Ext.TargetingRemote then
+					pcall(NamecallHandlers.FireServer.Targeting, { ... })
 				end
 			end
 			return oldNamecall(self, ...)
@@ -3690,7 +3799,7 @@ local function InitTracker()
 
 		oldNamecall = hookmetamethod(game, "__namecall", finalHook)
 
-		print(string.format("[GTD Tracker] __namecall Hook OK | Executor: %s | MobilePath: %s", executorName, tostring(isMobileExecutor)))
+		Ext.log("info", string.format("[GTD Tracker] __namecall Hook OK | Executor: %s | MobilePath: %s", executorName, tostring(isMobileExecutor)))
 
 		-- 函式式呼叫路徑：遊戲用 pcall(RemoteFunction.InvokeServer, rf, ...)，需 hookfunction 才攔得到
 		if hookfunction then
@@ -3705,7 +3814,7 @@ local function InitTracker()
 				oldInvoke = hookfunction(rfClass.InvokeServer, invokeHook)
 				rfClass:Destroy()
 			end)
-			print("[GTD Tracker] InvokeServer hookfunction:", okHook and "OK" or tostring(errHook))
+			Ext.log("info", "[GTD Tracker] InvokeServer hookfunction:", okHook and "OK" or tostring(errHook))
 		end
 
 		-- === 建立塔能力索引（花園塔防：能力資料內嵌於 GTD_ABILITY_DATA，免 require 全部單位設定，避免 WSA 閃退）===
@@ -3714,14 +3823,14 @@ local function InitTracker()
 			towersWithAbility[unitId] = { unitId }
 			abiCount += 1
 		end
-		print(string.format("[GTD Tracker] Tower ability index built (%d units)", abiCount))
+		Ext.log("info", string.format("[GTD Tracker] Tower ability index built (%d units)", abiCount))
 	end)
 
 	-- （花園塔防放置不帶 unique/突變，無 NTD 的 currentPlrData.Items.Towers；已移除舊的本地突變讀取）
 
 	task.defer(function()
 		if not ok then
-			warn("[GTD Tracker] Init failed:", err)
+			Ext.log("warn", "[GTD Tracker] Init failed:", err)
 			addLog(T("logInitFailed"), Theme.Error)
 			return
 		end
@@ -3783,7 +3892,7 @@ local function InitTracker()
 			T("logStarted"):format(gameSettings.mapId, gameSettings.difficulty, gameSettings.modifier),
 			Color3.fromRGB(100, 255, 100)
 		)
-		print("[GTD Tracker] Init complete")
+		Ext.log("info", "[GTD Tracker] Init complete")
 	end)
 end
 
