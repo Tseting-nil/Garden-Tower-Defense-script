@@ -464,6 +464,7 @@ local SellAllRemote = nil -- 花園塔防：SellAll() 一次清除場上所有�
 local BuyPlotRemote = nil -- 活動地塊：RemoteEvents.BuyPlot:FireServer(plotId)（RemoteEvent）
 -- Luau 單一函式 local 上限 200：本次新增的輔助全放進 Ext 表，不再佔用主程式 local 名額。
 -- Ext.TargetingRemote = 塔策略 RemoteEvents.Entity_ChangeTargetingMode:FireServer(gameId, mode)
+-- Ext.AutoSkipRemote  = RemoteEvents.SetAutoSkip:FireServer(bool)
 -- Ext.targetingLog    = 塔策略記錄 { gameId, order, mode, elapsed }
 local Ext = { targetingLog = {} }
 -- 追蹤器自帶 UI 日誌；console 一律不輸出（部分遊戲偵測 console 特殊字元會踢人），僅轉送 GTD_Log 緩衝
@@ -3375,6 +3376,7 @@ local function InitTracker()
 		-- 變速已改成 RemoteEvent（FireServer(speed)），舊的 RemoteFunctions.ChangeTickSpeed 已移除
 		GameSpeedRemote = RE and RE:FindFirstChild("ChangeTickSpeed")
 		Ext.TargetingRemote = RE and RE:FindFirstChild("Entity_ChangeTargetingMode")
+		Ext.AutoSkipRemote = RE and RE:FindFirstChild("SetAutoSkip")
 
 		-- 放置塔容器（升級/賣出 gameId 來源）
 		local Map = workspace:WaitForChild("Map", 10)
@@ -3421,23 +3423,30 @@ local function InitTracker()
 		autoSkipState.on = readAutoSkipWave()
 		pcall(updateInfoLabel)
 		task.spawn(function()
+			-- 輪詢只比對「UI 文字自己的變化」（lastUiOn）；遠程攔截（FireServer.AutoSkip）已先記過的值
+			-- （autoSkipState.on 已等於 on）不重複記，也避免 UI 文字比遠程晚更新時誤記一筆相反的值。
+			local lastUiOn = autoSkipState.on
 			while true do
 				task.wait(0.5)
 				local on = readAutoSkipWave()
-				if on ~= autoSkipState.on then
-					autoSkipState.on = on
+				if on ~= lastUiOn then
+					lastUiOn = on
 					pcall(updateInfoLabel)
-					if isGameRunning then
-						local elapsed = getElapsed()
-						table.insert(gameSettingLog, {
-							name = "AutoSkipWave",
-							value = on,
-							elapsed = elapsed,
-						})
-						addLog(
-							T("logGameSetting"):format("AutoSkipWave", tostring(on), elapsed),
-							Color3.fromRGB(200, 150, 255)
-						)
+					-- UI 這一輪才變、且遠程攔截還沒記過這個值（autoSkipState.on 不同）→ 補記
+					if on ~= autoSkipState.on then
+						autoSkipState.on = on
+						if isGameRunning then
+							local elapsed = getElapsed()
+							table.insert(gameSettingLog, {
+								name = "AutoSkipWave",
+								value = on,
+								elapsed = elapsed,
+							})
+							addLog(
+								T("logGameSetting"):format("AutoSkipWave", tostring(on), elapsed),
+								Color3.fromRGB(200, 150, 255)
+							)
+						end
 					end
 				end
 			end
@@ -3614,6 +3623,22 @@ local function InitTracker()
 			return result
 		end
 
+		-- Auto Skip：SetAutoSkip:FireServer(bool)。直接用遠端參數記錄（比輪詢 UI 文字準，時間也是送出當下）；
+		-- 同步 autoSkipState.on，輪詢偵測到 UI 變化時就不會重複記一筆。純 Lua，log 交給 queueHookTask。
+		NamecallHandlers.FireServer.AutoSkip = function(args)
+			local on = args[1] == true
+			if not isGameRunning or autoSkipState.on == on then
+				return
+			end
+			autoSkipState.on = on
+			local elapsed = getElapsed()
+			table.insert(gameSettingLog, { name = "AutoSkipWave", value = on, elapsed = elapsed })
+			queueHookTask(function()
+				pcall(updateInfoLabel)
+				addLog(T("logGameSetting"):format("AutoSkipWave", tostring(on), elapsed), Color3.fromRGB(200, 150, 255))
+			end)
+		end
+
 		-- 塔策略：Entity_ChangeTargetingMode:FireServer(gameId, mode)。hook 內只做純 Lua 記錄
 		-- （idToOrder 查表、getElapsed 皆純 Lua）；addLog 交給 queueHookTask（hook 外、elevated）。
 		-- 同一塔連續改到相同模式（或伺服器端自動同步子單位時的重複送出）不重複記。
@@ -3772,6 +3797,8 @@ local function InitTracker()
 					pcall(NamecallHandlers.FireServer.GameSpeed, self, { ... }, nil)
 				elseif Ext.TargetingRemote and self == Ext.TargetingRemote then
 					pcall(NamecallHandlers.FireServer.Targeting, { ... })
+				elseif Ext.AutoSkipRemote and self == Ext.AutoSkipRemote then
+					pcall(NamecallHandlers.FireServer.AutoSkip, { ... })
 				end
 			end
 			return oldNamecall(self, ...)
