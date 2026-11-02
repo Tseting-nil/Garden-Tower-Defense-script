@@ -3795,10 +3795,19 @@ local function InitTracker()
 					pcall(NamecallHandlers.FireServer.BuyPlot, { ... })
 				elseif GameSpeedRemote and self == GameSpeedRemote then
 					pcall(NamecallHandlers.FireServer.GameSpeed, self, { ... }, nil)
-				elseif Ext.TargetingRemote and self == Ext.TargetingRemote then
-					pcall(NamecallHandlers.FireServer.Targeting, { ... })
-				elseif Ext.AutoSkipRemote and self == Ext.AutoSkipRemote then
-					pcall(NamecallHandlers.FireServer.AutoSkip, { ... })
+				else
+					-- Entity_* 遠程由伺服器隨單位動態建立（開局初始化時可能還不存在），不能靠初始化時抓的實例比對，
+					-- 改用名稱判斷（屬性讀取不是 namecall，hook 內安全）。
+					local okName, remoteName = pcall(function()
+						return self.Name
+					end)
+					if okName then
+						if remoteName == "Entity_ChangeTargetingMode" then
+							pcall(NamecallHandlers.FireServer.Targeting, { ... })
+						elseif remoteName == "SetAutoSkip" then
+							pcall(NamecallHandlers.FireServer.AutoSkip, { ... })
+						end
+					end
 				end
 			end
 			return oldNamecall(self, ...)
