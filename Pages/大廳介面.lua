@@ -220,6 +220,7 @@ local i18n = {
     trait_data_unavailable = "無法取得玩家資料（資料未載入，或此執行器不支援）",
 		-- 活動 (Event) 分頁
 		tab_event = "活動",
+		tab_log = "日誌",
 		event_flower_section = "自動採花",
 		event_flower_toggle = "自動採花（走路採全場花）",
 		event_flower_started = "自動採花已啟動",
@@ -380,6 +381,7 @@ local i18n = {
     trait_data_unavailable = "Player data unavailable (not loaded, or executor unsupported)",
 		-- Event tab
 		tab_event = "Event",
+		tab_log = "Log",
 		event_flower_section = "Auto Flower",
 		event_flower_toggle = "Auto Flower (walk & harvest all)",
 		event_flower_started = "Auto Flower started",
@@ -427,7 +429,8 @@ for _, Name in ipairs({
 	L.tab_localscript,
 	L.tab_settings,
   L.tab_trait,
-	L.tab_event
+	L.tab_event,
+	L.tab_log
 }) do
 	local Tab = TabsWindow:CreateTab({
 		Name = Name
@@ -478,6 +481,29 @@ local Tab_event = Tabs[6]:ScrollingCanvas({
 	Fill = true,
 	UiPadding = UDim.new(0, 0)
 })
+
+-- ===== 日誌分頁：腳本所有 print / warn 的輸出出口（不寫入 Roblox console，避免被遊戲偵測特殊字元後踢出）=====
+do
+	local LogConsole = Tabs[7]:Console({
+		ReadOnly   = true,
+		AutoScroll = true,
+		RichText   = true,
+		MaxLines   = 300,
+		Border     = true,
+		Size       = UDim2.new(1, 0, 0, 200),
+	})
+	local LOG_COLORS = { info = "#d0d0d0", warn = "#ffb347", error = "#ff6b6b" }
+	local function appendLogLine(line)
+		local text = tostring(line.text):gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;")
+		LogConsole:AppendText(string.format("<font color='%s'>[%s] %s</font>",
+			LOG_COLORS[line.level] or LOG_COLORS.info, tostring(line.at or ""), text))
+	end
+	-- 先補上 UI 建立前累積的緩衝，再接上即時輸出
+	for _, line in ipairs(getgenv().GTD_LogBuffer or {}) do
+		pcall(appendLogLine, line)
+	end
+	getgenv().GTD_LogSink = appendLogLine
+end
 
 -- 獲取密鑰系統資訊 { saved_at: number, script_language: string, key: string, expires_at: number, language: string }
 Mainfunction.GetkeyInfo = function()
