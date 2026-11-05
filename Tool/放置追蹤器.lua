@@ -2495,9 +2495,15 @@ local function generateScript(mode)
 			table.concat(towerLits, ", ")))
 	end
 	if hasMap and hasDif then
-		table.insert(fullLines, string.format(
-			'\tGTD.SelectMap("%s", "%s")',
-			gameSettings.mapId, gameSettings.difficultyId))
+		if gameSettings.night or workspace:GetAttribute("Night") == true then
+			table.insert(fullLines, string.format(
+				'\tGTD.SelectMap("%s", "%s", "night") -- 活動模式（夜間）；普通模式請拿掉第 3 參數',
+				gameSettings.mapId, gameSettings.difficultyId))
+		else
+			table.insert(fullLines, string.format(
+				'\tGTD.SelectMap("%s", "%s")',
+				gameSettings.mapId, gameSettings.difficultyId))
+		end
 	end
 	table.insert(fullLines, "\treturn")
 	table.insert(fullLines, "end")
@@ -3386,6 +3392,7 @@ local function InitTracker()
 		gameSettings.mapId = workspace:GetAttribute("MapId") or "Unknown"
 		gameSettings.difficulty = normalizeDifficulty(workspace:GetAttribute("Difficulty"))
 		gameSettings.difficultyId = workspace:GetAttribute("Difficulty") -- 原始 id（dif_insane），重播投票用
+		gameSettings.night = workspace:GetAttribute("Night") == true -- 夜間（活動）模式，重播 SelectMap 第 3 參數
 		gameSettings.modifier = "None"
 		lastDetectedSpeed = detectGameSpeedNum()
 
