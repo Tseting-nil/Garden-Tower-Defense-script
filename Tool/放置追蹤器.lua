@@ -473,15 +473,20 @@ local Ext = { targetingLog = {} }
 -- MapId/Night 改放在 Config(JSON：mapId/night)，BaseHP 變 BaseHP_<隊伍>；塔與敵人都在 Context.Entities。
 -- 以下 helper 先讀 Context，讀不到再退回 workspace（相容舊版）。
 Ext.GetContext = function()
+	-- 重開（RestartGame）後遊戲可能新建 td_2…而舊的 td_1 殘留 → 取編號最大（最新）的那個
 	local ctxs = workspace:FindFirstChild("Contexts")
+	local best, bestN = nil, -1
 	if ctxs then
 		for _, c in ipairs(ctxs:GetChildren()) do
 			if c.Name:sub(1, 2) == "td" then
-				return c
+				local n = tonumber(c.Name:match("(%d+)$")) or 0
+				if n > bestN then
+					best, bestN = c, n
+				end
 			end
 		end
 	end
-	return nil
+	return best
 end
 Ext.ConfigField = function(ctx, key)
 	local raw = ctx and ctx:GetAttribute("Config")
@@ -3750,9 +3755,14 @@ local function InitTracker()
 		end
 
 		NamecallHandlers.InvokeServer.Difficulty = function(_, args, result)
-			local difficulty = normalizeDifficulty(args[1])
+			-- 1.76.0：官方呼叫是 (關卡 Context, 難度 id)，舊版是 (難度 id)；取第一個字串參數
+			local difRaw = type(args[1]) == "string" and args[1] or (type(args[2]) == "string" and args[2] or nil)
+			if difRaw == nil then
+				return result
+			end
+			local difficulty = normalizeDifficulty(difRaw)
 			gameSettings.difficulty = difficulty
-			gameSettings.difficultyId = args[1] -- 原始 id（dif_*），重播投票用
+			gameSettings.difficultyId = difRaw -- 原始 id（dif_*），重播投票用
 			queueHookTask(function()
 				-- 同一局重複的投票（API 開局重試）只記第一次；難度改了才再記
 				if diffVoteLogged ~= difficulty then

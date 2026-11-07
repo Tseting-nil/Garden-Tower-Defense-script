@@ -21,10 +21,13 @@ end
 -- 遊戲 1.76.0：關卡屬性搬到 workspace.Contexts.td_*，先讀 Context、退回 workspace
 local function GTD_WA(name)
 	local ctxs = workspace:FindFirstChild("Contexts")
-	local ctx
+	local ctx, bn = nil, -1
 	if ctxs then
 		for _, c in ipairs(ctxs:GetChildren()) do
-			if c.Name:sub(1, 2) == "td" then ctx = c break end
+			if c.Name:sub(1, 2) == "td" then
+				local n = tonumber(c.Name:match("(%d+)$")) or 0
+				if n > bn then ctx, bn = c, n end
+			end
 		end
 	end
 	if ctx then
@@ -36,11 +39,16 @@ local function GTD_WA(name)
 end
 local function GTD_WAChanged(name)
 	local ctxs = workspace:FindFirstChild("Contexts")
+	local ctx, bn = nil, -1
 	if ctxs then
 		for _, c in ipairs(ctxs:GetChildren()) do
-			if c.Name:sub(1, 2) == "td" then return c:GetAttributeChangedSignal(name) end
+			if c.Name:sub(1, 2) == "td" then
+				local n = tonumber(c.Name:match("(%d+)$")) or 0
+				if n > bn then ctx, bn = c, n end
+			end
 		end
 	end
+	if ctx then return ctx:GetAttributeChangedSignal(name) end
 	return workspace:GetAttributeChangedSignal(name)
 end
 local print = function(...) getgenv().GTD_Log("info", ...) end

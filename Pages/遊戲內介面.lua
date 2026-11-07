@@ -21,10 +21,13 @@ end
 -- 遊戲 1.76.0：關卡屬性搬到 workspace.Contexts.td_*，先讀 Context、退回 workspace
 local function GTD_WA(name)
 	local ctxs = workspace:FindFirstChild("Contexts")
-	local ctx
+	local ctx, bn = nil, -1
 	if ctxs then
 		for _, c in ipairs(ctxs:GetChildren()) do
-			if c.Name:sub(1, 2) == "td" then ctx = c break end
+			if c.Name:sub(1, 2) == "td" then
+				local n = tonumber(c.Name:match("(%d+)$")) or 0
+				if n > bn then ctx, bn = c, n end
+			end
 		end
 	end
 	if ctx then
@@ -34,13 +37,35 @@ local function GTD_WA(name)
 	end
 	return workspace:GetAttribute(name)
 end
+-- 遊戲新版 ClientDataHandler 沒有 GetData()，改用 GetValueNow(欄位名)；回傳可用 data.Seeds 讀取的代理表（舊版仍走 GetData）
+local function GTD_GetClientData()
+	local cdh = require(game.Players.LocalPlayer.PlayerGui.LogicHolder.ClientLoader.Modules.ClientDataHandler)
+	if type(cdh.GetData) == "function" then
+		return cdh.GetData()
+	end
+	local getter = cdh.GetValueNow or cdh.GetValue
+	if type(getter) ~= "function" then
+		return nil
+	end
+	return setmetatable({}, {
+		__index = function(_, key)
+			local ok, v = pcall(getter, key)
+			return ok and v or nil
+		end,
+	})
+end
 local function GTD_WAChanged(name)
 	local ctxs = workspace:FindFirstChild("Contexts")
+	local ctx, bn = nil, -1
 	if ctxs then
 		for _, c in ipairs(ctxs:GetChildren()) do
-			if c.Name:sub(1, 2) == "td" then return c:GetAttributeChangedSignal(name) end
+			if c.Name:sub(1, 2) == "td" then
+				local n = tonumber(c.Name:match("(%d+)$")) or 0
+				if n > bn then ctx, bn = c, n end
+			end
 		end
 	end
+	if ctx then return ctx:GetAttributeChangedSignal(name) end
 	return workspace:GetAttributeChangedSignal(name)
 end
 local print = function(...) getgenv().GTD_Log("info", ...) end
@@ -607,7 +632,20 @@ ROW_QK:Button({
 						local success = false
 						for attempt = 1, 3 do
 							pcall(function()
-								RestartGame:InvokeServer()
+								-- 1.76.0：需帶關卡 Context（取最新 td_N），與官方結算介面一致
+								local ctxs = workspace:FindFirstChild("Contexts")
+								local ctx, bn = nil, -1
+								for _, c in ipairs(ctxs and ctxs:GetChildren() or {}) do
+									if c.Name:sub(1, 2) == "td" then
+										local n = tonumber(c.Name:match("(%d+)$")) or 0
+										if n > bn then ctx, bn = c, n end
+									end
+								end
+								if ctx then
+									RestartGame:InvokeServer(ctx, false)
+								else
+									RestartGame:InvokeServer()
+								end
 							end)
 							
 							local deadline = os.clock() + 10
@@ -1063,8 +1101,7 @@ updatePlayInfo = function()
 	-- 獲取 Seeds (優先 ClientDataHandler，備用方案為 leaderstats)
 	local seedsCount = nil
 	local ok, data = pcall(function()
-		local ClientDataHandler = require(game.Players.LocalPlayer.PlayerGui.LogicHolder.ClientLoader.Modules.ClientDataHandler)
-		return type(ClientDataHandler.GetData) == "function" and ClientDataHandler.GetData() or ClientDataHandler:GetData()
+		return GTD_GetClientData()
 	end)
 	if ok and data and data.Seeds then
 		seedsCount = data.Seeds
@@ -1681,8 +1718,7 @@ task.spawn(function()
 	local function getSeeds()
 		local seedsCount = 0
 		local ok, data = pcall(function()
-			local ClientDataHandler = require(game.Players.LocalPlayer.PlayerGui.LogicHolder.ClientLoader.Modules.ClientDataHandler)
-			return type(ClientDataHandler.GetData) == "function" and ClientDataHandler.GetData() or ClientDataHandler:GetData()
+			return GTD_GetClientData()
 		end)
 		if ok and data and data.Seeds then
 			seedsCount = data.Seeds
