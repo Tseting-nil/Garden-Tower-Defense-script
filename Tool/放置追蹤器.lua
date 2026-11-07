@@ -558,6 +558,16 @@ function Ext.log(level, ...)
 		pcall(sink, level, ...)
 	end
 end
+-- 1.76.0：每一局（Context）被放在不同的世界座標偏移上（Origin 屬性，CFrame；td_1=0,0,0、td_2=-4096,0,0…）。
+-- 輸出腳本的座標扣掉放置當下的 Origin（相對座標），重播時 API 再加上當局 Origin。
+Ext.GetOrigin = function()
+	local ctx = Ext.GetContext()
+	local o = ctx and ctx:GetAttribute("Origin")
+	if typeof(o) == "CFrame" then
+		return o.Position
+	end
+	return Vector3.zero
+end
 -- 花園塔防：放置塔容器（workspace.Map.Entities），子物件帶 ID attribute = 升級/賣出用的 gameId
 local EntitiesFolder = nil
 
@@ -2205,9 +2215,10 @@ local function writeOp(lines, op)
 	if op.type == "place" then
 		local info = op.info
 		local p = info.Position
-		local x = p and p.X or 0
-		local y = p and p.Y or 0
-		local z = p and p.Z or 0
+		local org = info.Origin or Vector3.zero
+		local x = p and (p.X - org.X) or 0
+		local y = p and (p.Y - org.Y) or 0
+		local z = p and (p.Z - org.Z) or 0
 		local rot = math.floor((info.Rotation or 0) + 0.5)
 		if info.PathIndex ~= nil then
 			-- 沿路塔（如滾動塔 unit_wheel_bush）：多帶 PathIndex / DistanceAlongPath
@@ -3235,6 +3246,7 @@ local function processPendingPlacements()
 				UnitType = job.unitName,
 				DisplayName = job.unitName,
 				Position = job.targetPos,
+				Origin = Ext.GetOrigin(), -- 輸出腳本時扣掉（腳本座標相對 Context 原點）
 				GameID = gameId,
 				Rotation = job.rotation or 0,
 				CF = job.placeCF,
