@@ -269,10 +269,19 @@ end
 -- ============================================================
 local INFO_BTN_NAME = "GTD_DescInfoButton"
 
+-- 1.76.0：Behaviors.base 的 FindEntityById / GetActiveUnits 第一個參數要帶「.Run」（內部讀 參數.Run.registry），
+-- 用目前的 ClientWorld 包成 { Run = world }；舊版（無此參數）會忽略多餘參數，仍可運作。
+local function unitCtx()
+	local ok, world = pcall(function()
+		return UnitBase.GetClientWorld and UnitBase.GetClientWorld()
+	end)
+	return { Run = ok and world or nil }
+end
+
 -- 開啟目前查看中那座塔的說明（含詞條）
 local function openDescription()
 	local params = viewerSection.FrameParams
-	local unit = params and params.EntityId and UnitBase.FindEntityById(params.EntityId)
+	local unit = params and params.EntityId and select(2, pcall(UnitBase.FindEntityById, unitCtx(), params.EntityId))
 	if not (unit and unit.UnitId) then
 		return
 	end
@@ -408,7 +417,7 @@ local function patchTeammateClicks()
 	if not trackerEntries then
 		return
 	end
-	local ok, units = pcall(UnitBase.GetActiveUnits)
+	local ok, units = pcall(UnitBase.GetActiveUnits, unitCtx())
 	if not ok or type(units) ~= "table" then
 		return
 	end
@@ -418,7 +427,7 @@ local function patchTeammateClicks()
 			byObject[e.object] = e
 		end
 	end
-	for _, unit in ipairs(units) do
+	for _, unit in pairs(units) do
 		local data = unit.Data
 		local inst = unit.Instance
 		if type(data) == "table" and data.Owner ~= LocalPlayer and typeof(inst) == "Instance" then

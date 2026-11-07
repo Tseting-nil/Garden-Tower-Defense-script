@@ -205,9 +205,13 @@ local function collectDamage()
 		history = {}
 	end
 	if UnitBase and UnitBase.GetActiveUnits then
-		local ok, units = pcall(UnitBase.GetActiveUnits)
+		-- 1.76.0：GetActiveUnits 第一個參數要帶 .Run（內部讀 參數.Run.registry）→ 包 ClientWorld
+		local okW, world = pcall(function()
+			return UnitBase.GetClientWorld and UnitBase.GetClientWorld()
+		end)
+		local ok, units = pcall(UnitBase.GetActiveUnits, { Run = okW and world or nil })
 		if ok and type(units) == "table" then
-			for _, unit in ipairs(units) do
+			for _, unit in pairs(units) do
 				local data = unit.Data
 				local metrics = type(data) == "table" and data.StatMetrics
 				local owner = type(data) == "table" and ownerName(data.Owner)
