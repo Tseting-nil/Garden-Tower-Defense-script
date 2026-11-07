@@ -18,6 +18,31 @@ if not getgenv().GTD_Log then
 		end
 	end
 end
+-- 遊戲 1.76.0：關卡屬性搬到 workspace.Contexts.td_*，先讀 Context、退回 workspace
+local function GTD_WA(name)
+	local ctxs = workspace:FindFirstChild("Contexts")
+	local ctx
+	if ctxs then
+		for _, c in ipairs(ctxs:GetChildren()) do
+			if c.Name:sub(1, 2) == "td" then ctx = c break end
+		end
+	end
+	if ctx then
+		local v = ctx:GetAttribute(name)
+		if v == nil and name == "BaseHP" then v = ctx:GetAttribute("BaseHP_1") end
+		if v ~= nil then return v end
+	end
+	return workspace:GetAttribute(name)
+end
+local function GTD_WAChanged(name)
+	local ctxs = workspace:FindFirstChild("Contexts")
+	if ctxs then
+		for _, c in ipairs(ctxs:GetChildren()) do
+			if c.Name:sub(1, 2) == "td" then return c:GetAttributeChangedSignal(name) end
+		end
+	end
+	return workspace:GetAttributeChangedSignal(name)
+end
 local print = function(...) getgenv().GTD_Log("info", ...) end
 local warn = function(...) getgenv().GTD_Log("warn", ...) end
 
@@ -227,7 +252,7 @@ local function getElapsed()
 		local ok, el = pcall(function() return GTD.GetQueueElapsed() end)
 		if ok and el then return el end
 	end
-	local gst = workspace:GetAttribute("GameStartTime")
+	local gst = GTD_WA("GameStartTime")
 	if type(gst) == "number" and gst > 0 then
 		return workspace:GetServerTimeNow() - gst
 	end
@@ -963,11 +988,11 @@ end
 hookMainfunctions()
 
 -- === 自動重製與新局偵測 ===
-local lastGameStart = workspace:GetAttribute("GameStartTime")
+local lastGameStart = GTD_WA("GameStartTime")
 
 local function onGameStartTimeChanged()
 	local Scripttable, Mainfunction = getGTD()
-	local gst = workspace:GetAttribute("GameStartTime")
+	local gst = GTD_WA("GameStartTime")
 	if type(gst) == "number" and gst > 0 then
 		if gst ~= lastGameStart then
 			lastGameStart = gst
@@ -986,7 +1011,7 @@ local function onGameStartTimeChanged()
 	end
 end
 
-workspace:GetAttributeChangedSignal("GameStartTime"):Connect(onGameStartTimeChanged)
+GTD_WAChanged("GameStartTime"):Connect(onGameStartTimeChanged)
 
 -- 初始化 UI 清單與同步
 initUIList()

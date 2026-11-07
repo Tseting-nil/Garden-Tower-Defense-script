@@ -18,6 +18,31 @@ if not getgenv().GTD_Log then
 		end
 	end
 end
+-- 遊戲 1.76.0：關卡屬性搬到 workspace.Contexts.td_*，先讀 Context、退回 workspace
+local function GTD_WA(name)
+	local ctxs = workspace:FindFirstChild("Contexts")
+	local ctx
+	if ctxs then
+		for _, c in ipairs(ctxs:GetChildren()) do
+			if c.Name:sub(1, 2) == "td" then ctx = c break end
+		end
+	end
+	if ctx then
+		local v = ctx:GetAttribute(name)
+		if v == nil and name == "BaseHP" then v = ctx:GetAttribute("BaseHP_1") end
+		if v ~= nil then return v end
+	end
+	return workspace:GetAttribute(name)
+end
+local function GTD_WAChanged(name)
+	local ctxs = workspace:FindFirstChild("Contexts")
+	if ctxs then
+		for _, c in ipairs(ctxs:GetChildren()) do
+			if c.Name:sub(1, 2) == "td" then return c:GetAttributeChangedSignal(name) end
+		end
+	end
+	return workspace:GetAttributeChangedSignal(name)
+end
 local print = function(...) getgenv().GTD_Log("info", ...) end
 local warn = function(...) getgenv().GTD_Log("warn", ...) end
 
@@ -578,7 +603,7 @@ ROW_QK:Button({
 						end
 
 						-- 3. 觸發重開
-						local gstBefore = workspace:GetAttribute("GameStartTime")
+						local gstBefore = GTD_WA("GameStartTime")
 						local success = false
 						for attempt = 1, 3 do
 							pcall(function()
@@ -587,7 +612,7 @@ ROW_QK:Button({
 							
 							local deadline = os.clock() + 10
 							while os.clock() < deadline do
-								local gstNow = workspace:GetAttribute("GameStartTime")
+								local gstNow = GTD_WA("GameStartTime")
 								if gstNow ~= gstBefore then
 									success = true
 									break
@@ -1677,8 +1702,8 @@ task.spawn(function()
 		task.wait(1)
 		if getgenv().GTD_UI_InstanceId ~= myInstanceId then break end
 		pcall(function()
-			local gst = workspace:GetAttribute("GameStartTime")
-			local get = workspace:GetAttribute("GameEndTime")
+			local gst = GTD_WA("GameStartTime")
+			local get = GTD_WA("GameEndTime")
 			
 			-- 1. 檢測到遊戲結束：有 GameEndTime 且目前處於追蹤狀態，或本地檔案中寫入了 tempResult
 			local tempResult = nil
@@ -1717,7 +1742,7 @@ task.spawn(function()
 						statsWriteAll(currentData)
 					end)
 				else
-					local hp = workspace:GetAttribute("BaseHP")
+					local hp = GTD_WA("BaseHP")
 					if type(hp) == "number" and hp <= 0 then
 						isWin = false
 					end

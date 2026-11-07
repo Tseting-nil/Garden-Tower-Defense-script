@@ -18,6 +18,31 @@ if not getgenv().GTD_Log then
 		end
 	end
 end
+-- 遊戲 1.76.0：關卡屬性搬到 workspace.Contexts.td_*，先讀 Context、退回 workspace
+local function GTD_WA(name)
+	local ctxs = workspace:FindFirstChild("Contexts")
+	local ctx
+	if ctxs then
+		for _, c in ipairs(ctxs:GetChildren()) do
+			if c.Name:sub(1, 2) == "td" then ctx = c break end
+		end
+	end
+	if ctx then
+		local v = ctx:GetAttribute(name)
+		if v == nil and name == "BaseHP" then v = ctx:GetAttribute("BaseHP_1") end
+		if v ~= nil then return v end
+	end
+	return workspace:GetAttribute(name)
+end
+local function GTD_WAChanged(name)
+	local ctxs = workspace:FindFirstChild("Contexts")
+	if ctxs then
+		for _, c in ipairs(ctxs:GetChildren()) do
+			if c.Name:sub(1, 2) == "td" then return c:GetAttributeChangedSignal(name) end
+		end
+	end
+	return workspace:GetAttributeChangedSignal(name)
+end
 local print = function(...) getgenv().GTD_Log("info", ...) end
 local warn = function(...) getgenv().GTD_Log("warn", ...) end
 
@@ -154,7 +179,7 @@ end
 -- ============================================================
 local unitDamage = {} -- [unit ID] = { owner = 名稱, damage = 最後的 TotalDamage }
 local history = {} -- [玩家名] = { lastT, lastTotal, samples = { {t, dps}, ... } }（DPS 用）
-local lastGameStart = workspace:GetAttribute("GameStartTime")
+local lastGameStart = GTD_WA("GameStartTime")
 
 local function ownerName(owner)
 	if typeof(owner) == "Instance" and owner:IsA("Player") then
@@ -165,7 +190,7 @@ end
 
 local function collectDamage()
 	-- 新的一局：清空
-	local gst = workspace:GetAttribute("GameStartTime")
+	local gst = GTD_WA("GameStartTime")
 	if gst ~= lastGameStart then
 		lastGameStart = gst
 		unitDamage = {}

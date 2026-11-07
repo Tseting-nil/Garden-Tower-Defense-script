@@ -467,6 +467,85 @@ local BuyPlotRemote = nil -- 活動地塊：RemoteEvents.BuyPlot:FireServer(plot
 -- Ext.AutoSkipRemote  = RemoteEvents.SetAutoSkip:FireServer(bool)
 -- Ext.targetingLog    = 塔策略記錄 { gameId, order, mode, elapsed }
 local Ext = { targetingLog = {} }
+
+-- ===== 遊戲 1.76.0：關卡狀態搬到 workspace.Contexts.td_*（Folder）=====
+-- 舊版屬性在 workspace（GameStartTime/Difficulty/MapId/Night/BaseHP…），新版在 Context 資料夾上，
+-- MapId/Night 改放在 Config(JSON：mapId/night)，BaseHP 變 BaseHP_<隊伍>；塔與敵人都在 Context.Entities。
+-- 以下 helper 先讀 Context，讀不到再退回 workspace（相容舊版）。
+Ext.GetContext = function()
+	local ctxs = workspace:FindFirstChild("Contexts")
+	if ctxs then
+		for _, c in ipairs(ctxs:GetChildren()) do
+			if c.Name:sub(1, 2) == "td" then
+				return c
+			end
+		end
+	end
+	return nil
+end
+Ext.ConfigField = function(ctx, key)
+	local raw = ctx and ctx:GetAttribute("Config")
+	if type(raw) ~= "string" then
+		return nil
+	end
+	local ok, data = pcall(function()
+		return game:GetService("HttpService"):JSONDecode(raw)
+	end)
+	return ok and type(data) == "table" and data[key] or nil
+end
+Ext.WA = function(name)
+	local ctx = Ext.GetContext()
+	if ctx then
+		local v = ctx:GetAttribute(name)
+		if v ~= nil then
+			return v
+		end
+		if name == "MapId" then
+			return Ext.ConfigField(ctx, "mapId") or workspace:GetAttribute(name)
+		elseif name == "Night" then
+			return (Ext.ConfigField(ctx, "night") == true) and true or workspace:GetAttribute(name)
+		elseif name == "BaseHP" then
+			v = ctx:GetAttribute("BaseHP_1")
+			if v ~= nil then
+				return v
+			end
+		end
+	end
+	return workspace:GetAttribute(name)
+end
+Ext.WAChanged = function(name)
+	local ctx = Ext.GetContext()
+	if ctx then
+		local key = (name == "MapId" or name == "Night") and "Config" or name
+		return ctx:GetAttributeChangedSignal(key)
+	end
+	return workspace:GetAttributeChangedSignal(name)
+end
+-- 地圖資料夾（Context.Map 或舊版 workspace.Map）
+Ext.GetMapFolder = function()
+	local ctx = Ext.GetContext()
+	return (ctx and ctx:FindFirstChild("Map")) or workspace:FindFirstChild("Map")
+end
+-- 塔/敵人容器（Context.Entities 或舊版 workspace.Map.Entities）；timeout 內等它出現
+Ext.GetEntities = function(timeout)
+	local deadline = os.clock() + (timeout or 0)
+	repeat
+		local ctx = Ext.GetContext()
+		local e = ctx and ctx:FindFirstChild("Entities")
+		if not e then
+			local m = workspace:FindFirstChild("Map")
+			e = m and m:FindFirstChild("Entities")
+		end
+		if e then
+			return e
+		end
+		if os.clock() >= deadline then
+			break
+		end
+		task.wait(0.25)
+	until false
+	return nil
+end
 -- 追蹤器自帶 UI 日誌；console 一律不輸出（部分遊戲偵測 console 特殊字元會踢人），僅轉送 GTD_Log 緩衝
 function Ext.log(level, ...)
 	local sink = getgenv().GTD_Log
@@ -562,7 +641,7 @@ local function calibrateByCountdown(runGst)
 				return false
 			end
 			-- 仍是同一局才改（局已結束或換局就放棄）
-			if isGameRunning and workspace:GetAttribute("GameStartTime") == runGst then
+			if isGameRunning and Ext.WA("GameStartTime") == runGst then
 				gameStartTime = newStart
 			end
 			return true
@@ -587,7 +666,7 @@ local function startGameTimer(mapId)
 		return false
 	end
 	-- 花園塔防：用 workspace.GameStartTime(Unix秒) 校準錨點，支援腳本中途載入時 elapsed 從真正開局算起
-	local gst = workspace:GetAttribute("GameStartTime")
+	local gst = Ext.WA("GameStartTime")
 	if type(gst) == "number" and gst > 0 then
 		local already = os.time() - gst
 		if already < 0 then already = 0 end
@@ -2495,7 +2574,7 @@ local function generateScript(mode)
 			table.concat(towerLits, ", ")))
 	end
 	if hasMap and hasDif then
-		if gameSettings.night or workspace:GetAttribute("Night") == true then
+		if gameSettings.night or Ext.WA("Night") == true then
 			table.insert(fullLines, string.format(
 				'\tGTD.SelectMap("%s", "%s", "night") -- 活動模式（夜間）；普通模式請拿掉第 3 參數',
 				gameSettings.mapId, gameSettings.difficultyId))
@@ -3001,7 +3080,7 @@ resetBtn.MouseButton1Click:Connect(function()
 	-- 舊碼的 WaitForChild("Values",3) 每次重置都會白等 3 秒 timeout）。難度由 InitTracker 的
 	-- Difficulty 屬性監聽持續維護，重置不需重讀。
 	pcall(function()
-		gameSettings.mapId = workspace:GetAttribute("MapId") or gameSettings.mapId or "Unknown"
+		gameSettings.mapId = Ext.WA("MapId") or gameSettings.mapId or "Unknown"
 	end)
 
 	for _, child in pairs(scrollFrame:GetChildren()) do
@@ -3077,7 +3156,7 @@ end
 
 -- 遊戲速度：讀 workspace 屬性 TickSpeed（比舊版抓 UI 顏色穩；回傳數字 1/2/3）
 local function detectGameSpeedNum()
-	local v = workspace:GetAttribute("TickSpeed")
+	local v = Ext.WA("TickSpeed")
 	if type(v) == "number" and v > 0 then return v end
 	return 1
 end
@@ -3286,8 +3365,7 @@ local function StartLevelWatcher()
 				local presentIds = {}
 				local Entities = EntitiesFolder
 				if not (Entities and Entities.Parent) then
-					local Map = workspace:FindFirstChild("Map")
-					Entities = Map and Map:FindFirstChild("Entities")
+					Entities = Ext.GetEntities(0)
 				end
 				if Entities then
 					for _, child in ipairs(Entities:GetChildren()) do
@@ -3385,20 +3463,19 @@ local function InitTracker()
 		Ext.AutoSkipRemote = RE and RE:FindFirstChild("SetAutoSkip")
 
 		-- 放置塔容器（升級/賣出 gameId 來源）
-		local Map = workspace:WaitForChild("Map", 10)
-		EntitiesFolder = Map and Map:WaitForChild("Entities", 10)
+		EntitiesFolder = Ext.GetEntities(10)
 
 		-- 遊戲資訊：讀 workspace 屬性
-		gameSettings.mapId = workspace:GetAttribute("MapId") or "Unknown"
-		gameSettings.difficulty = normalizeDifficulty(workspace:GetAttribute("Difficulty"))
-		gameSettings.difficultyId = workspace:GetAttribute("Difficulty") -- 原始 id（dif_insane），重播投票用
-		gameSettings.night = workspace:GetAttribute("Night") == true -- 夜間（活動）模式，重播 SelectMap 第 3 參數
+		gameSettings.mapId = Ext.WA("MapId") or "Unknown"
+		gameSettings.difficulty = normalizeDifficulty(Ext.WA("Difficulty"))
+		gameSettings.difficultyId = Ext.WA("Difficulty") -- 原始 id（dif_insane），重播投票用
+		gameSettings.night = Ext.WA("Night") == true -- 夜間（活動）模式，重播 SelectMap 第 3 參數
 		gameSettings.modifier = "None"
 		lastDetectedSpeed = detectGameSpeedNum()
 
 		-- 地圖切換監聽（雙圖流程）
-		workspace:GetAttributeChangedSignal("MapId"):Connect(function()
-			local newMap = workspace:GetAttribute("MapId") or "Unknown"
+		Ext.WAChanged("MapId"):Connect(function()
+			local newMap = Ext.WA("MapId") or "Unknown"
 			if isGameRunning and newMap ~= gameSettings.mapId then
 				local elapsed = getElapsed()
 				table.insert(mapTransitionLog, {
@@ -3416,8 +3493,8 @@ local function InitTracker()
 		end)
 
 		-- 難度變化（PlaceDifficultyVote hook 也會設；這裡監聽屬性保險）
-		workspace:GetAttributeChangedSignal("Difficulty"):Connect(function()
-			local raw = workspace:GetAttribute("Difficulty")
+		Ext.WAChanged("Difficulty"):Connect(function()
+			local raw = Ext.WA("Difficulty")
 			local d = normalizeDifficulty(raw)
 			if gameSettings.difficulty ~= d then
 				gameSettings.difficulty = d
@@ -3697,7 +3774,7 @@ local function InitTracker()
 			end
 			local elapsed = getElapsed()
 			queueHookTask(function()
-				local map = workspace:FindFirstChild("Map")
+				local map = Ext.GetMapFolder()
 				local folder = map and map:FindFirstChild("CornPlots", true)
 				local model = nil
 				for _, child in ipairs(folder and folder:GetChildren() or {}) do
@@ -3888,7 +3965,7 @@ local function InitTracker()
 			if isGameRunning then
 				return
 			end
-			local gst = workspace:GetAttribute("GameStartTime")
+			local gst = Ext.WA("GameStartTime")
 			if type(gst) ~= "number" or gst <= 0 then
 				return
 			end
@@ -3897,7 +3974,7 @@ local function InitTracker()
 				addLog(T("logDiffStart"):format(gameSettings.difficulty), Color3.fromRGB(100, 255, 100))
 			end)
 		end
-		workspace:GetAttributeChangedSignal("GameStartTime"):Connect(onGameStart)
+		Ext.WAChanged("GameStartTime"):Connect(onGameStart)
 		onGameStart() -- 腳本中途載入：若遊戲已開始，立即起算
 
 		-- 遊戲結束：偵測 GameGui.Screen.Middle.GameEnd 顯示（取代 GameRunning=false）
@@ -3961,8 +4038,7 @@ RunService.Heartbeat:Connect(function(dt)
 		-- 帶 ID 屬性 = gameId。gameId 直接從 ID 屬性綁，不靠 NTD 的 place-hook 名稱配對。
 		local Entities = EntitiesFolder
 		if not (Entities and Entities.Parent) then
-			local Map = workspace:FindFirstChild("Map")
-			Entities = Map and Map:FindFirstChild("Entities")
+			Entities = Ext.GetEntities(0)
 		end
 
 		if Entities then
