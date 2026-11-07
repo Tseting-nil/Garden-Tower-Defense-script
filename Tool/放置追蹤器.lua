@@ -488,6 +488,15 @@ Ext.GetContext = function()
 	end
 	return best
 end
+-- 目前 Context 的世界座標原點（放置座標寫成相對 Origin，重開後地圖搬到別處仍可重播）
+Ext.GetOrigin = function()
+	local ctx = Ext.GetContext()
+	local o = ctx and ctx:GetAttribute("Origin")
+	if typeof(o) == "CFrame" then
+		return o.Position
+	end
+	return Vector3.zero
+end
 Ext.ConfigField = function(ctx, key)
 	local raw = ctx and ctx:GetAttribute("Config")
 	if type(raw) ~= "string" then
@@ -2205,9 +2214,10 @@ local function writeOp(lines, op)
 	if op.type == "place" then
 		local info = op.info
 		local p = info.Position
-		local x = p and p.X or 0
-		local y = p and p.Y or 0
-		local z = p and p.Z or 0
+		local org = info.OriginPos or Vector3.zero
+		local x = p and (p.X - org.X) or 0
+		local y = p and (p.Y - org.Y) or 0
+		local z = p and (p.Z - org.Z) or 0
 		local rot = math.floor((info.Rotation or 0) + 0.5)
 		if info.PathIndex ~= nil then
 			-- 沿路塔（如滾動塔 unit_wheel_bush）：多帶 PathIndex / DistanceAlongPath
@@ -3242,6 +3252,7 @@ local function processPendingPlacements()
 				PathIndex = job.pathIndex,
 				DistanceAlongPath = job.distanceAlongPath,
 				Elapsed = elapsed,
+				OriginPos = Ext.GetOrigin(),
 				cost = 0,
 			}
 			if job.placeAction then
