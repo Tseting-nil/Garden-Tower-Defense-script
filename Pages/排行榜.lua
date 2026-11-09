@@ -18,18 +18,41 @@ if not getgenv().GTD_Log then
 		end
 	end
 end
--- 遊戲 1.76.0：關卡屬性搬到 workspace.Contexts.td_*，先讀 Context、退回 workspace
-local function GTD_WA(name)
+-- 遊戲 1.76.0+：關卡屬性搬到 workspace.Contexts.<RunId>，先讀 Context、退回 workspace
+local function GTD_GetContext()
 	local ctxs = workspace:FindFirstChild("Contexts")
-	local ctx, bn = nil, -1
-	if ctxs then
-		for _, c in ipairs(ctxs:GetChildren()) do
-			if c.Name:sub(1, 2) == "td" then
-				local n = tonumber(c.Name:match("(%d+)$")) or 0
-				if n > bn then ctx, bn = c, n end
+	if not ctxs then return nil end
+	local children = ctxs:GetChildren()
+	if #children == 0 then return nil end
+	if #children == 1 then return children[1] end
+
+	local best = nil
+	local bestScore = -1
+	for _, c in ipairs(children) do
+		if c:IsA("Folder") or c:FindFirstChild("Entities") or c:GetAttribute("Config") or c:GetAttribute("RunId") then
+			local score = 0
+			local tdNum = tonumber(c.Name:match("(%d+)$"))
+			if tdNum then score = tdNum * 1000 end
+			local gst = c:GetAttribute("GameStartTime")
+			if type(gst) == "number" then score = math.max(score, gst) end
+			local voteEnd = c:GetAttribute("DifficultyVoteEnd")
+			if type(voteEnd) == "number" then score = math.max(score, voteEnd) end
+			local endT = c:GetAttribute("GameEndTime")
+			local hp = c:GetAttribute("BaseHP_1")
+			if endT == nil and (hp == nil or hp > 0) then
+				score = score + 10000000000
+			end
+			if score > bestScore then
+				bestScore = score
+				best = c
 			end
 		end
 	end
+	return best or children[#children]
+end
+
+local function GTD_WA(name)
+	local ctx = GTD_GetContext()
 	if ctx then
 		local v = ctx:GetAttribute(name)
 		if v == nil and name == "BaseHP" then v = ctx:GetAttribute("BaseHP_1") end
@@ -38,16 +61,7 @@ local function GTD_WA(name)
 	return workspace:GetAttribute(name)
 end
 local function GTD_WAChanged(name)
-	local ctxs = workspace:FindFirstChild("Contexts")
-	local ctx, bn = nil, -1
-	if ctxs then
-		for _, c in ipairs(ctxs:GetChildren()) do
-			if c.Name:sub(1, 2) == "td" then
-				local n = tonumber(c.Name:match("(%d+)$")) or 0
-				if n > bn then ctx, bn = c, n end
-			end
-		end
-	end
+	local ctx = GTD_GetContext()
 	if ctx then return ctx:GetAttributeChangedSignal(name) end
 	return workspace:GetAttributeChangedSignal(name)
 end

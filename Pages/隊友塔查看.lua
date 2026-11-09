@@ -395,18 +395,37 @@ end
 -- 因此只記下被點的塔，交給下方背景迴圈開啟查看器。
 -- ============================================================
 local trackerEntries = nil
-pcall(function()
-	local getup = debug.getupvalues or getupvalues
-	for _, v in pairs(getup(MouseTracker.StartTracking)) do
-		local first = type(v) == "table" and v[1]
-		if type(first) == "table" and first.object ~= nil and first.hovering ~= nil then
-			trackerEntries = v
-			break
-		end
+local function getTrackerEntries()
+	if trackerEntries then
+		return trackerEntries
 	end
-end)
-if not trackerEntries then
-	warn("[隊友塔查看] 找不到滑鼠追蹤清單，地圖點擊無法啟用")
+	pcall(function()
+		local getup = debug.getupvalues or getupvalues
+		local ups = getup(MouseTracker.StartTracking)
+		-- 1. 優先找已有項目的 table
+		for _, v in pairs(ups) do
+			if type(v) == "table" then
+				local first = v[1]
+				if type(first) == "table" and first.object ~= nil and first.hovering ~= nil then
+					trackerEntries = v
+					return
+				end
+			end
+		end
+		-- 2. 若場上尚未放塔 (#v == 0)，由反編譯結構可知 StartTracking 的第 2 個 upvalue 為常駐清單 u2
+		if type(ups[2]) == "table" then
+			trackerEntries = ups[2]
+			return
+		end
+		-- 3. 備援：找第一個 array table
+		for _, v in pairs(ups) do
+			if type(v) == "table" and next(v) == nil then
+				trackerEntries = v
+				return
+			end
+		end
+	end)
+	return trackerEntries
 end
 
 local patchedEntries = {} -- 已補上 OnClick 的項目（關閉時還原）
@@ -414,7 +433,8 @@ local pendingOpen = nil -- 等待開啟查看器的塔
 
 -- 替所有隊友的塔補上點擊
 local function patchTeammateClicks()
-	if not trackerEntries then
+	local entries = getTrackerEntries()
+	if not entries then
 		return
 	end
 	local ok, units = pcall(UnitBase.GetActiveUnits, unitCtx())
