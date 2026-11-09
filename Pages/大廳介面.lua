@@ -1374,7 +1374,10 @@ HeaderRow:Button({
 							"local GTD = getgenv().GTD\n" ..
 							"if not GTD or not GTD.ExecuteQueue then\n" ..
 							'\tloadstring(game:HttpGet("https://raw.githubusercontent.com/Tseting-nil/Garden-Tower-Defense-script/refs/heads/main/%E5%AF%86%E9%91%B0%E7%B3%BB%E7%B5%B1.lua"))()\n' ..
-							"\tGTD = getgenv().GTD\n" ..
+							"\trepeat\n" ..
+							"\t\tGTD = getgenv().GTD\n" ..
+							"\t\tif not (GTD and GTD.SaveLocalScript) then task.wait(0.5) end\n" ..
+							"\tuntil GTD and GTD.SaveLocalScript\n" ..
 							"end\n\n" ..
 							"GTD.SaveLocalScript(fullScript)\n" ..
 							"loadstring(fullScript)()\n"
