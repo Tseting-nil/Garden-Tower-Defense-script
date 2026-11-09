@@ -468,25 +468,60 @@ local BuyPlotRemote = nil -- 活動地塊：RemoteEvents.BuyPlot:FireServer(plot
 -- Ext.targetingLog    = 塔策略記錄 { gameId, order, mode, elapsed }
 local Ext = { targetingLog = {} }
 
--- ===== 遊戲 1.76.0：關卡狀態搬到 workspace.Contexts.td_*（Folder）=====
+-- ===== 遊戲 1.76.0：關卡狀態搬到 workspace.Contexts.<RunId>（Folder）=====
 -- 舊版屬性在 workspace（GameStartTime/Difficulty/MapId/Night/BaseHP…），新版在 Context 資料夾上，
--- MapId/Night 改放在 Config(JSON：mapId/night)，BaseHP 變 BaseHP_<隊伍>；塔與敵人都在 Context.Entities。
+-- 資料夾名稱為 UUID (RunId) 或舊版 td_*；MapId/Night 改放在 Config(JSON：mapId/night)，BaseHP 變 BaseHP_<隊伍>；塔與敵人都在 Context.Entities。
 -- 以下 helper 先讀 Context，讀不到再退回 workspace（相容舊版）。
 Ext.GetContext = function()
-	-- 重開（RestartGame）後遊戲可能新建 td_2…而舊的 td_1 殘留 → 取編號最大（最新）的那個
 	local ctxs = workspace:FindFirstChild("Contexts")
-	local best, bestN = nil, -1
-	if ctxs then
-		for _, c in ipairs(ctxs:GetChildren()) do
-			if c.Name:sub(1, 2) == "td" then
-				local n = tonumber(c.Name:match("(%d+)$")) or 0
-				if n > bestN then
-					best, bestN = c, n
-				end
+	if not ctxs then
+		return nil
+	end
+
+	local children = ctxs:GetChildren()
+	if #children == 0 then
+		return nil
+	end
+	if #children == 1 then
+		return children[1]
+	end
+
+	-- 若有多個 Context（重開殘留），選出最新/當前活躍的
+	local best = nil
+	local bestScore = -1
+
+	for _, c in ipairs(children) do
+		if c:IsA("Folder") or c:FindFirstChild("Entities") or c:GetAttribute("Config") or c:GetAttribute("RunId") then
+			local score = 0
+			-- 1. 舊版 td_%d 序號
+			local tdNum = tonumber(c.Name:match("(%d+)$"))
+			if tdNum then
+				score = tdNum * 1000
+			end
+			-- 2. 時間戳（最新局的 GameStartTime 或 DifficultyVoteEnd 較大）
+			local gst = c:GetAttribute("GameStartTime")
+			if type(gst) == "number" then
+				score = math.max(score, gst)
+			end
+			local voteEnd = c:GetAttribute("DifficultyVoteEnd")
+			if type(voteEnd) == "number" then
+				score = math.max(score, voteEnd)
+			end
+			-- 3. 若尚未結束 (無 GameEndTime 且 BaseHP_1 > 0)，優先加權
+			local endT = c:GetAttribute("GameEndTime")
+			local hp = c:GetAttribute("BaseHP_1")
+			if endT == nil and (hp == nil or hp > 0) then
+				score = score + 10000000000
+			end
+
+			if score > bestScore then
+				bestScore = score
+				best = c
 			end
 		end
 	end
-	return best
+
+	return best or children[#children]
 end
 -- 目前 Context 的世界座標原點（放置座標寫成相對 Origin，重開後地圖搬到別處仍可重播）
 Ext.GetOrigin = function()
@@ -634,43 +669,148 @@ local function getElapsed()
 	return tick() - gameStartTime
 end
 
--- 基準
+-- 基準（UI 倒數校準起點）
 local function calibrateByCountdown(runGst)
 	task.spawn(function()
-		local node = Players.LocalPlayer:FindFirstChild("PlayerGui")
-		for _, n in ipairs({ "GameGuiNoInset", "Screen", "Top", "GameInfo", "Content", "Waves", "Title" }) do
-			node = node and node:WaitForChild(n, 5)
-		end
-		if not node then
+		local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui", 10)
+		local overlay = playerGui and playerGui:WaitForChild("WaveCountdownOverlay", 10)
+		local waveCountdown = overlay and overlay:WaitForChild("WaveCountdown", 10)
+
+		if not waveCountdown then
 			return
 		end
-		local function parse(text)
-			local newStart
-			local num = text:match("^%d+$") and tonumber(text)
-			if num and num <= 5 then
-				newStart = tick() - (5 - num)
-			elseif text:match("Enemies incoming") then
-				newStart = tick() - 5
-			else
-				return false
+
+		local done = false
+		local connections = {}
+
+		local function disconnectAll()
+			for _, c in ipairs(connections) do
+				pcall(function()
+					c:Disconnect()
+				end)
 			end
-			-- 仍是同一局才改（局已結束或換局就放棄）
+			table.clear(connections)
+		end
+
+		local function applyStart(newStart)
 			if isGameRunning and Ext.WA("GameStartTime") == runGst then
 				gameStartTime = newStart
 			end
-			return true
 		end
-		if parse(node.Text) then
-			return
+
+		local function parseText(text)
+			if type(text) ~= "string" then
+				return false
+			end
+			-- 格式 1: 純數字 "5", "4", "3", "2", "1"（來自 BigText.mount）
+			if text:match("^%s*%d+%s*$") then
+				local num = tonumber(text:match("%d+"))
+				if num and num >= 0 and num <= 10 then
+					local start = tick() - (5 - num)
+					applyStart(start)
+					return true
+				end
+			end
+
+			-- 格式 2: "Enemies arrive in %d"
+			local arriveNum = text:match("[Aa]rrive%s+in%s+(%d+)")
+			if arriveNum then
+				local num = tonumber(arriveNum)
+				if num and num >= 0 and num <= 10 then
+					local start = tick() - (5 - num)
+					applyStart(start)
+					return true
+				end
+			end
+
+			-- 格式 3: "Enemies incoming!"（BigText 在倒數結束時產生的字樣）
+			if text:match("incoming") then
+				local start = tick() - 5
+				applyStart(start)
+				return true
+			end
+
+			return false
 		end
-		local conn
-		conn = node:GetPropertyChangedSignal("Text"):Connect(function()
-			if parse(node.Text) then
-				conn:Disconnect()
+
+		local boundInstances = {}
+		local function checkAndBind(inst)
+			if not inst or done then
+				return
+			end
+			if not (inst:IsA("TextLabel") or inst:IsA("TextButton")) then
+				return
+			end
+			if boundInstances[inst] then
+				return
+			end
+			boundInstances[inst] = true
+
+			-- 嘗試立即讀取文字
+			local ok, curText = pcall(function()
+				return inst.Text
+			end)
+			if ok and curText and parseText(curText) then
+				done = true
+				disconnectAll()
+				return
+			end
+
+			-- 監聽 Text 屬性變動
+			local propConn = inst:GetPropertyChangedSignal("Text"):Connect(function()
+				if done then
+					return
+				end
+				local tOk, text = pcall(function()
+					return inst.Text
+				end)
+				if tOk and text and parseText(text) then
+					done = true
+					disconnectAll()
+				end
+			end)
+			table.insert(connections, propConn)
+		end
+
+		-- 1. WaveCountdown 內部檢測器：監聽子孫物件加入 (BigText 或 Caption)
+		local addConn = waveCountdown.DescendantAdded:Connect(function(descendant)
+			if done then
+				return
+			end
+			checkAndBind(descendant)
+			for _, child in ipairs(descendant:GetDescendants()) do
+				checkAndBind(child)
 			end
 		end)
+		table.insert(connections, addConn)
+
+		-- 2. WaveCountdown 內部檢測器：監聽 Caption 被刪除（倒數結束時 Caption 會被 Trove 清理銷毀）
+		local remConn = waveCountdown.DescendantRemoving:Connect(function(descendant)
+			if done then
+				return
+			end
+			if descendant.Name == "Caption" then
+				done = true
+				disconnectAll()
+				local start = tick() - 5
+				applyStart(start)
+			end
+		end)
+		table.insert(connections, remConn)
+
+		-- 3. 檢查目前已存在的所有文字物件
+		for _, desc in ipairs(waveCountdown:GetDescendants()) do
+			checkAndBind(desc)
+			if done then
+				return
+			end
+		end
+
 		task.delay(15, function()
-			pcall(function() conn:Disconnect() end)
+			if not done then
+				done = true
+				disconnectAll()
+			end
 		end)
 	end)
 end
