@@ -596,12 +596,12 @@ ROW_QK:Button({
 	Text = L.btnToggleAutoReplay,
 	TextSize = fontSize or 18,
 	Callback = function()
-		if getgenv().GTD then
-			if Scripttable.autoReplay then
-				Mainfunction.AutoReplay(false)
-			else
-				Mainfunction.AutoReplay(true)
-			end
+		local GTD = getgenv().GTD
+		if GTD and GTD.AutoReplay then
+			local s = GTD.Scripttable
+			local newState = not (s and s.autoReplay == true)
+			GTD.AutoReplay(newState)
+			AutoReplay_Label.Text = newState and L.autoReplayOn or L.autoReplayOff
 		else
 			Msg:Warning(L.noEnv)
 		end
