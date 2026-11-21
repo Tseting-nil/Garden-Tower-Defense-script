@@ -199,9 +199,14 @@ end
 -- ============================================================
 -- 統計
 -- ============================================================
+local alive = true
 local unitDamage = {} -- [unit ID] = { owner = 名稱, damage = 最後的 TotalDamage }
-local history = {} -- [玩家名] = { lastT, lastTotal, samples = { {t, dps}, ... } }（DPS 用）
+local playerDps = {} -- [玩家名] = 每分鐘計算的平均 DPS
+local lastSyncTotals = {} -- [玩家名] = 上次同步時的總傷害
+local lastSyncTime = os.clock()
 local lastGameStart = GTD_WA("GameStartTime")
+local SYNC_INTERVAL = 60 -- 秒：每分鐘向伺服器同步 1 次，避免伺服器負擔
+local syncRunning = false
 
 local function ownerName(owner)
 	if typeof(owner) == "Instance" and owner:IsA("Player") then
@@ -210,13 +215,92 @@ local function ownerName(owner)
 	return owner and tostring(owner) or nil
 end
 
-local function collectDamage()
+local collectDamage
+
+-- 遊戲最新版官方調整：伺服器為節省網路流量，預設只向客戶端推播玩家當前查看（ViewingUnit）的那座塔。
+-- 透過向伺服器發送 SetViewingUnit 請求，伺服器會立即回傳該塔的 StatMetrics（包含 TotalDamage）。
+local function syncUnitMetrics()
+	if syncRunning or not alive then return end
+	if not (UnitBase and UnitBase.GetActiveUnits) then return end
+	local remote = game:GetService("ReplicatedStorage"):FindFirstChild("RemoteEvents")
+	remote = remote and remote:FindFirstChild("SetViewingUnit")
+	if not remote then return end
+
+	local okW, world = pcall(function()
+		return UnitBase.GetClientWorld and UnitBase.GetClientWorld()
+	end)
+	local okU, units = pcall(UnitBase.GetActiveUnits, { Run = okW and world or nil })
+	if not (okU and type(units) == "table") then return end
+
+	syncRunning = true
+	task.spawn(function()
+		local activeViewingId = LocalPlayer:GetAttribute("ViewingUnit")
+		local uvOpen = false
+		pcall(function()
+			local gg = LocalPlayer:FindFirstChild("PlayerGui")
+			gg = gg and gg:FindFirstChild("GameGui")
+			local uv = gg and gg:FindFirstChild("Screen") and gg.Screen:FindFirstChild("Bottom") and gg.Screen.Bottom:FindFirstChild("UnitViewer")
+			uvOpen = uv and uv.Visible
+		end)
+
+		local lastCtx = nil
+		for _, u in pairs(units) do
+			if not alive then break end
+			if u.Context and u.ID then
+				lastCtx = u.Context
+				remote:FireServer(u.Context, u.ID)
+				task.wait(0.02)
+			end
+		end
+
+		-- 若玩家手動打開了 UnitViewer 檢視特定塔，將 ViewingUnit 切回以避免干擾介面
+		if uvOpen and activeViewingId and lastCtx and alive then
+			remote:FireServer(lastCtx, activeViewingId)
+		end
+
+		-- 等待最後幾筆回傳封包抵達客戶端
+		task.wait(0.3)
+
+		-- 計算每分鐘 DPS（以兩次同步間的傷害增量 ÷ 經過秒數）
+		local now = os.clock()
+		local dt = now - lastSyncTime
+		local totals = collectDamage()
+		if dt > 0 then
+			for _, p in ipairs(Players:GetPlayers()) do
+				local name = p.Name
+				local cur = totals[name] or 0
+				local prev = lastSyncTotals[name]
+				if prev ~= nil then
+					playerDps[name] = math.max(0, (cur - prev) / dt)
+				else
+					-- 首次同步：若關卡已進行一段時間，依開局時間估算平均 DPS，否則暫為 0
+					local gst = GTD_WA("GameStartTime")
+					local elapsed = (type(gst) == "number" and gst > 0) and (os.time() - gst) or 0
+					if elapsed > 5 then
+						playerDps[name] = math.max(0, cur / elapsed)
+					else
+						playerDps[name] = 0
+					end
+				end
+				lastSyncTotals[name] = cur
+			end
+			lastSyncTime = now
+		end
+
+		syncRunning = false
+	end)
+end
+
+collectDamage = function()
 	-- 新的一局：清空
 	local gst = GTD_WA("GameStartTime")
 	if gst ~= lastGameStart then
 		lastGameStart = gst
 		unitDamage = {}
-		history = {}
+		playerDps = {}
+		lastSyncTotals = {}
+		lastSyncTime = os.clock()
+		task.spawn(syncUnitMetrics)
 	end
 	if UnitBase and UnitBase.GetActiveUnits then
 		-- 1.76.0：GetActiveUnits 第一個參數要帶 .Run（內部讀 參數.Run.registry）→ 包 ClientWorld
@@ -453,10 +537,17 @@ end
 -- ============================================================
 setNativeList(false)
 
-local alive = true
 local inputConn = UserInputService.InputBegan:Connect(function(input, processed)
 	if not processed and input.KeyCode == Enum.KeyCode.Tab then
 		frame.Visible = not frame.Visible
+	end
+end)
+
+-- 背景定時向伺服器同步塔的最新總傷害（官方新機制只推播被檢視的塔）
+task.spawn(function()
+	while alive and screenGui.Parent do
+		pcall(syncUnitMetrics)
+		task.wait(SYNC_INTERVAL)
 	end
 end)
 
@@ -464,10 +555,9 @@ task.spawn(function()
 	while alive and screenGui.Parent do
 		local ok, err = pcall(function()
 			local totals = collectDamage()
-			local now = os.clock()
 			local dpsByName = {}
 			for _, p in ipairs(Players:GetPlayers()) do
-				dpsByName[p.Name] = updateDps(p.Name, totals[p.Name] or 0, now)
+				dpsByName[p.Name] = playerDps[p.Name] or 0
 			end
 			render(totals, dpsByName)
 			updatePosition()
