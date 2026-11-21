@@ -54,6 +54,8 @@ local gameSettings = {
 	mapId = "Unknown",
 	difficulty = "Unknown",
 	modifier = "None",
+	night = false,
+	turkey = false,
 }
 
 -- === 腳本設定 ===
@@ -285,6 +287,8 @@ local Lang = {
 		["Bangsplosion"] = "砰爆",
 		["Loveburst"] = "愛心爆發",
 		["Toggle"] = "切換",
+		commentModeTurkey = "活動模式（火雞）；普通模式請拿掉第 3 參數",
+		commentModeNight = "活動模式（夜間）；普通模式請拿掉第 3 參數",
 	},
 	en = {
 		titleMain = "Garden Tower | Tracker",
@@ -387,6 +391,8 @@ local Lang = {
 		["Bangsplosion"] = "Bangsplosion",
 		["Loveburst"] = "Loveburst",
 		["Toggle"] = "Toggle",
+		commentModeTurkey = "Event mode (Turkey); remove 3rd param for Normal",
+		commentModeNight = "Event mode (Night); remove 3rd param for Normal",
 	},
 }
 
@@ -553,6 +559,8 @@ Ext.WA = function(name)
 			return Ext.ConfigField(ctx, "mapId") or workspace:GetAttribute(name)
 		elseif name == "Night" then
 			return (Ext.ConfigField(ctx, "night") == true) and true or workspace:GetAttribute(name)
+		elseif name == "Turkey" then
+      return Ext.ConfigField(ctx, "turkey") == true or Ext.ConfigField(ctx, "turkeyMode") == true or Ext.ConfigField(ctx, "gameMode") == "turkey" or workspace:GetAttribute("Turkey") == true or workspace:GetAttribute("turkey") == true
 		elseif name == "BaseHP" then
 			v = ctx:GetAttribute("BaseHP_1")
 			if v ~= nil then
@@ -565,7 +573,7 @@ end
 Ext.WAChanged = function(name)
 	local ctx = Ext.GetContext()
 	if ctx then
-		local key = (name == "MapId" or name == "Night") and "Config" or name
+		local key = (name == "MapId" or name == "Night" or name == "Turkey") and "Config" or name
 		return ctx:GetAttributeChangedSignal(key)
 	end
 	return workspace:GetAttributeChangedSignal(name)
@@ -2732,10 +2740,14 @@ local function generateScript(mode)
 			table.concat(towerLits, ", ")))
 	end
 	if hasMap and hasDif then
-		if gameSettings.night or Ext.WA("Night") == true then
+		if gameSettings.turkey or Ext.WA("Turkey") == true then
 			table.insert(fullLines, string.format(
-				'\tGTD.SelectMap("%s", "%s", "night") -- 活動模式（夜間）；普通模式請拿掉第 3 參數',
-				gameSettings.mapId, gameSettings.difficultyId))
+				'\tGTD.SelectMap("%s", "%s", "turkey") -- %s',
+				gameSettings.mapId, gameSettings.difficultyId, T("commentModeTurkey")))
+		elseif gameSettings.night or Ext.WA("Night") == true then
+			table.insert(fullLines, string.format(
+				'\tGTD.SelectMap("%s", "%s", "night") -- %s',
+				gameSettings.mapId, gameSettings.difficultyId, T("commentModeNight")))
 		else
 			table.insert(fullLines, string.format(
 				'\tGTD.SelectMap("%s", "%s")',
@@ -3242,6 +3254,15 @@ resetBtn.MouseButton1Click:Connect(function()
 	-- Difficulty 屬性監聽持續維護，重置不需重讀。
 	pcall(function()
 		gameSettings.mapId = Ext.WA("MapId") or gameSettings.mapId or "Unknown"
+		gameSettings.night = Ext.WA("Night") == true
+		gameSettings.turkey = Ext.WA("Turkey") == true
+		if gameSettings.turkey then
+			gameSettings.modifier = "Turkey"
+		elseif gameSettings.night then
+			gameSettings.modifier = "Night"
+		else
+			gameSettings.modifier = "None"
+		end
 	end)
 
 	for _, child in pairs(scrollFrame:GetChildren()) do
@@ -3633,8 +3654,31 @@ local function InitTracker()
 		gameSettings.difficulty = normalizeDifficulty(Ext.WA("Difficulty"))
 		gameSettings.difficultyId = Ext.WA("Difficulty") -- 原始 id（dif_insane），重播投票用
 		gameSettings.night = Ext.WA("Night") == true -- 夜間（活動）模式，重播 SelectMap 第 3 參數
-		gameSettings.modifier = "None"
+		gameSettings.turkey = Ext.WA("Turkey") == true -- 火雞（活動）模式，重播 SelectMap 第 3 參數
+		if gameSettings.turkey then
+			gameSettings.modifier = "Turkey"
+		elseif gameSettings.night then
+			gameSettings.modifier = "Night"
+		else
+			gameSettings.modifier = "None"
+		end
 		lastDetectedSpeed = detectGameSpeedNum()
+
+		local function refreshMode()
+			gameSettings.night = Ext.WA("Night") == true
+			gameSettings.turkey = Ext.WA("Turkey") == true
+			if gameSettings.turkey then
+				gameSettings.modifier = "Turkey"
+			elseif gameSettings.night then
+				gameSettings.modifier = "Night"
+			else
+				gameSettings.modifier = "None"
+			end
+			updateInfoLabel()
+		end
+
+		Ext.WAChanged("Turkey"):Connect(refreshMode)
+		Ext.WAChanged("Night"):Connect(refreshMode)
 
 		-- 地圖切換監聽（雙圖流程）
 		Ext.WAChanged("MapId"):Connect(function()
