@@ -64,7 +64,7 @@ Loading the core script registers the global `GTD` table. Common categories incl
 
 - **Scene & Version Info**: `GTD.IsLobby()`, `GTD.IsInGame()`, `GTD.GetAPIinfo()`
 - **Game-End Detection**: `GTD.IsGameOver()`, `GTD.IsGameEndVisible()`, `GTD.GetGameResult()`
-- **Action Queue & Execution**: `GTD.AddPlaceTower(...)`, `GTD.AddUpgradeTower(...)`, `GTD.AddSellTower(...)`, `GTD.AddTowerAbility(...)`, `GTD.AddBuyPlot(...)`, `GTD.AddSetSpeed(...)`, `GTD.AddEnd(...)`, `GTD.ExecuteQueue()`, `GTD.AutoReplay(...)`
+- **Action Queue & Execution**: `GTD.AddPlaceTower(...)`, `GTD.AddUpgradeTower(...)`, `GTD.AddSellTower(...)`, `GTD.AddTowerAbility(...)`, `GTD.AddBuyPlot(...)`, `GTD.AddSetSpeed(...)`, `GTD.AddEnd(...)`, `GTD.ExecuteQueue()`, `GTD.StopQueue()`, `GTD.AutoReplay(...)`
 - **Anti-Macro & Cooldowns**: `GTD.SetJitter(...)`, `GTD.SetSpecialTowerCooldown(...)`, `GTD.SetEquipToolOnPlace(...)`
 - **Lobby & Unit Management**: `GTD.SelectMap(...)`, `GTD.SelectDifficulty(...)`, `GTD.StartLobby(...)`, `GTD.EquipLoadout(...)`, `GTD.BuyBox(...)`, `GTD.ClaimFertilizerDaily()`
 

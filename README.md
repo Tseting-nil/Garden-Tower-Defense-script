@@ -61,7 +61,7 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/Tseting-nil/Garden-To
 
 - **場景與版本查詢**：`GTD.IsLobby()`、`GTD.IsInGame()`、`GTD.GetAPIinfo()`
 - **遊戲結束檢測**：`GTD.IsGameOver()`、`GTD.IsGameEndVisible()`、`GTD.GetGameResult()`
-- **操作佇列與執行**：`GTD.AddPlaceTower(...)`、`GTD.AddUpgradeTower(...)`、`GTD.AddSellTower(...)`、`GTD.AddTowerAbility(...)`、`GTD.AddBuyPlot(...)`、`GTD.AddSetSpeed(...)`、`GTD.AddEnd(...)`、`GTD.ExecuteQueue()`、`GTD.AutoReplay(...)`
+- **操作佇列與執行**：`GTD.AddPlaceTower(...)`、`GTD.AddUpgradeTower(...)`、`GTD.AddSellTower(...)`、`GTD.AddTowerAbility(...)`、`GTD.AddBuyPlot(...)`、`GTD.AddSetSpeed(...)`、`GTD.AddEnd(...)`、`GTD.ExecuteQueue()`、`GTD.StopQueue()`、`GTD.AutoReplay(...)`
 - **反巨集與冷卻設定**：`GTD.SetJitter(...)`、`GTD.SetSpecialTowerCooldown(...)`、`GTD.SetEquipToolOnPlace(...)`
 - **大廳與單位管理**：`GTD.SelectMap(...)`、`GTD.SelectDifficulty(...)`、`GTD.StartLobby(...)`、`GTD.EquipLoadout(...)`、`GTD.BuyBox(...)`、`GTD.ClaimFertilizerDaily()`
 

@@ -56,6 +56,7 @@ Queue actions using `GTD.Add*`, then call `GTD.ExecuteQueue()` to execute them i
 | `GTD.AddSetSpeed(speed, gate)` | Queues game speed change (`speed = 1 / 2 / 3`) |
 | `GTD.AddEnd(elapsed)` | Marks recorded match end timestamp (seconds) so replay timing aligns with recording |
 | `GTD.ExecuteQueue()` | Waits for match start and executes all queued operations |
+| `GTD.StopQueue()` | Manually stops the currently running automation queue and replay loop (returns `boolean`) |
 | `GTD.GetQueueElapsed()` | Returns elapsed seconds since match start, or `nil` if not started |
 | `GTD.GetQueueRemaining()` | Returns remaining seconds until `AddEnd` timestamp (negative if exceeded), or `nil` |
 
@@ -102,6 +103,7 @@ GTD.SetJitter({
 ```
 
 ### Cooldowns & Monitoring
+- **Distance Protection (Auto-Approach)**: Tower placement (non-path towers), upgrade, sell, ability activation, and targeting mode changes automatically check distance to the target and walk closer if it exceeds `PlaceMoveRange` (default `70` studs).
 - `GTD.SetSpecialTowerCooldown(unitId, cooldownSeconds)`: Sets or clears placement cooldown in game-time seconds (built-in default: `unit_ice_dragon = 10`; pass `nil` or `<= 0` to clear).
 - `GTD.SetEquipToolOnPlace(enabled)`: Controls whether the unit Tool is automatically equipped before placement (default `true`).
 - `GTD.StartMacroNerfMonitor()` / `GTD.GetMacroNerf()`: Starts or reads macro nerf monitor state.

@@ -56,6 +56,7 @@
 | `GTD.AddSetSpeed(speed, gate)` | 加入變速操作（`speed = 1 / 2 / 3`） |
 | `GTD.AddEnd(elapsed)` | 加入結束時間標記（開局後總秒數），確保重播時間軸忠於錄製 |
 | `GTD.ExecuteQueue()` | 等待開局後依序執行佇列中的所有操作 |
+| `GTD.StopQueue()` | 手動停止目前運行中的自動化佇列與重播迴圈（回傳 `boolean`） |
 | `GTD.GetQueueElapsed()` | 回傳開局後已過秒數；尚未開局回傳 `nil` |
 | `GTD.GetQueueRemaining()` | 回傳距 `AddEnd` 結束點的剩餘秒數（負值代表已超過）；尚未開局或未呼叫 `AddEnd` 回傳 `nil` |
 
@@ -102,6 +103,7 @@ GTD.SetJitter({
 ```
 
 ### 其他監控與冷卻設定
+- **距離保護（自動靠近）**：放塔（非路徑塔）、升級、賣出、觸發能力與調整攻擊策略在執行前皆會檢查角色與目標距離；若超過 `PlaceMoveRange`（預設 `70` studs）會自動步行靠近後再送出指令。
 - `GTD.SetSpecialTowerCooldown(unitId, cooldownSeconds)`：設定或清除特殊塔放置冷卻（遊戲時間秒數，預設 `unit_ice_dragon = 10`；設為 `nil` 或 `<= 0` 清除）。
 - `GTD.SetEquipToolOnPlace(enabled)`：設定放置前是否自動將對應塔 Tool 拿到手上（預設開啟）。
 - `GTD.StartMacroNerfMonitor()` / `GTD.GetMacroNerf()`：啟動／讀取巨集檢測狀態。
