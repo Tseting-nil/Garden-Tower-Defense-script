@@ -14,6 +14,7 @@
 | :--- | :--- | :--- |
 | `GTD.IsLobby()` | `boolean` | 是否在大廳（PlaceId `108533757090220`） |
 | `GTD.IsInGame()` | `boolean` | 是否在關卡內（PlaceId `123516946198836`） |
+| `GTD.GetCurrentMapId()` | `string?` | 取得當前關卡地圖 ID（如 `"map_farm"`） |
 | `GTD.GetAPIinfo()` | `table` | 回傳 `{ LastUpdateTime, LastUpdateVersion, CurrentGameVersion }`（最後更新時間、最後更新版本、遊戲當前版本） |
 
 ---
