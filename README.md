@@ -17,11 +17,11 @@ Garden Tower Defense/
 │   ├── 排行榜.lua        # 自訂排行榜介面
 │   ├── 塔效果翻譯.lua    # 塔效果翻譯模組
 │   └── 塔效果翻譯表.lua  # 塔效果翻譯對照表
-├── Tool/
-│   ├── 放置追蹤器.lua    # 關卡操作錄製器，可匯出 GTD API 重播腳本
-│   ├── API說明_zh.md     # API 說明文件
-│   └── API_Reference_en.md  # API Reference
-└── API/                  # API 說明文件目錄
+└── Tool/
+    ├── 放置追蹤器.lua    # 關卡操作錄製器，可匯出 GTD API 重播腳本
+    ├── API說明_zh.md     # API 說明文件
+    └── API_Reference_en.md  # API Reference
+
 ```
 
 ## 核心功能 / Features
@@ -65,7 +65,7 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/Tseting-nil/Garden-To
 - **反巨集與冷卻設定**：`GTD.SetJitter(...)`、`GTD.SetSpecialTowerCooldown(...)`、`GTD.SetEquipToolOnPlace(...)`
 - **大廳與單位管理**：`GTD.SelectMap(...)`、`GTD.SelectDifficulty(...)`、`GTD.StartLobby(...)`、`GTD.EquipLoadout(...)`、`GTD.BuyBox(...)`、`GTD.ClaimFertilizerDaily()`
 
-詳細使用可參考[API 說明文件](Tool\API說明_zh.md)
+詳細使用可參考[API 說明文件](Tool/API說明_zh.md)
 
 ---
 

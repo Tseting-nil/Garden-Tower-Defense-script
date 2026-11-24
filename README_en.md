@@ -19,11 +19,10 @@ Garden Tower Defense/
 │   ├── 排行榜.lua        # Custom leaderboard GUI
 │   ├── 塔效果翻譯.lua    # Tower effect translation module
 │   └── 塔效果翻譯表.lua  # Tower effect translation table
-├── Tool/
-│   ├── 放置追蹤器.lua    # Placement Tracker for recording stage actions & exporting GTD API scripts
-│   ├── API說明_zh.md     # API Documentation (Traditional Chinese)
-│   └── API_Reference_en.md  # API Reference (English)
-└── API/                  # API documentation directory
+└── Tool/
+    ├── 放置追蹤器.lua    # Placement Tracker for recording stage actions & exporting GTD API scripts
+    ├── API說明_zh.md     # API Documentation (Traditional Chinese)
+    └── API_Reference_en.md  # API Reference (English)
 ```
 
 ## Features
