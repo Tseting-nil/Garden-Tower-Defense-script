@@ -168,6 +168,8 @@ local i18n = {
 		stateUnknown   = "當前遊戲狀態：未知",
 		envExist       = "環境檢查：本地環境存在",
 		envNotExist    = "環境檢查：本地環境不存在",
+		apiInfoFmt     = "API 版本：v%s（遊戲 v%s）| 更新：%s",
+		apiInfoNA      = "API 版本：---",
 		autoReplayOn   = "自動重新戰鬥：已開啟",
 		autoReplayOff  = "自動重新戰鬥：未開啟",
 		queueRemaining = "佇列剩餘：",
@@ -296,6 +298,8 @@ local i18n = {
 		stateUnknown   = "Game State: Unknown",
 		envExist       = "Environment: Local env exists",
 		envNotExist    = "Environment: Local env missing",
+		apiInfoFmt     = "API Ver: v%s (Game v%s) | Updated: %s",
+		apiInfoNA      = "API Ver: ---",
 		autoReplayOn   = "Auto Replay: Enabled",
 		autoReplayOff  = "Auto Replay: Disabled",
 		queueRemaining = "Queue Remaining: ",
@@ -575,6 +579,13 @@ local API_Check_Label = Tab_main:Label({
 	TextSize = fontSize or 18,
 	NoTheme = true,
 	TextColor3 = Color3.fromRGB(240, 240, 240),
+})
+
+local API_Info_Label = Tab_main:Label({
+	Text = L.apiInfoNA,
+	TextSize = fontSize or 14,
+	NoTheme = true,
+	TextColor3 = Color3.fromRGB(180, 220, 180),
 })
 
 local GameState_Label = Tab_main:Label({
@@ -1074,6 +1085,25 @@ task.spawn(function()
 			Scripttable = getgenv().GTD.Scripttable
 			Mainfunction = getgenv().GTD.Mainfunction
 			API_Check_Label.Text = L.envExist
+			pcall(function()
+				if GTD_API and type(GTD_API.GetAPIinfo) == "function" then
+					local info = GTD_API.GetAPIinfo()
+					if type(info) == "table" then
+						local apiVer = tostring(info.LastUpdateVersion or "?")
+						local gameVer = tostring(info.CurrentGameVersion or "?")
+						local updTime = tostring(info.LastUpdateTime or "-")
+						API_Info_Label.Text = string.format(L.apiInfoFmt, apiVer, gameVer, updTime)
+						if type(info.LastUpdateVersion) == "number" and type(info.CurrentGameVersion) == "number"
+							and info.CurrentGameVersion > 0 and info.LastUpdateVersion ~= info.CurrentGameVersion then
+							API_Info_Label.TextColor3 = Color3.fromRGB(255, 170, 0)
+						else
+							API_Info_Label.TextColor3 = Color3.fromRGB(180, 220, 180)
+						end
+					end
+				else
+					API_Info_Label.Text = L.apiInfoNA
+				end
+			end)
 			if Scripttable.autoReplay then
 				AutoReplay_Label.Text = L.autoReplayOn
 			else
@@ -1083,6 +1113,7 @@ task.spawn(function()
 			task.spawn(UpdateQueueLabels)
 		else
 			API_Check_Label.Text = L.envNotExist
+			API_Info_Label.Text = L.apiInfoNA
 			AutoReplay_Label.Text = L.noEnv
 		end
 		
