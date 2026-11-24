@@ -159,6 +159,7 @@ local i18n = {
 		btnToggleAutoReplay = "控制自動重開",
 		btnManualReplay     = "手動重開",
 		btnLobby            = "回大廳",
+		btnStopQueue        = "停止佇列",
 		noEnv          = "無環境",
 		cantLeave      = "遊戲限制未完成戰鬥無法離開",
 		stateLobby     = "當前遊戲狀態：在大廳",
@@ -203,6 +204,9 @@ local i18n = {
 		localscript_save_no_running = "無正在運行的腳本",
 		replayConfirm_title    = "確認手動重開?",
 		lobbyConfirm_title     = "確認回到大廳?",
+		stopQueueConfirm_title = "確認停止自動化佇列?",
+		stopQueueNotRunning    = "目前沒有運行中的佇列",
+		stopQueueSuccess       = "已送出停止佇列請求",
 		alreadyRunning         = "自動化佇列已在運行中",
 		playCashInit           = "金錢：---",
 		playSeedsInit          = "種子：---",
@@ -239,6 +243,8 @@ local i18n = {
 		stats_total            = "總場：",
 		stats_winrate          = "勝率：",
 		stats_money            = "賺取種子：",
+		stats_punish           = "懲罰計數：",
+		stats_punish_active    = "%d（目前 -%d%%，剩 %ds）",
 		stats_lastReset        = "上次重置：",
 		stats_reset            = "重置統計",
 		stats_reset_confirm    = "確認重置統計？",
@@ -281,6 +287,7 @@ local i18n = {
 		btnToggleAutoReplay = "Toggle Auto Replay",
 		btnManualReplay     = "Replay",
 		btnLobby            = "To Lobby",
+		btnStopQueue        = "Stop Queue",
 		noEnv          = "No Environment",
 		cantLeave      = "Cannot leave mid-combat",
 		stateLobby     = "Game State: In Lobby",
@@ -325,6 +332,9 @@ local i18n = {
 		localscript_save_no_running = "No running script",
 		replayConfirm_title    = "Confirm Replay?",
 		lobbyConfirm_title     = "Confirm back to Lobby?",
+		stopQueueConfirm_title = "Confirm stop automation queue?",
+		stopQueueNotRunning    = "No queue is currently running",
+		stopQueueSuccess       = "Stop queue request sent",
 		alreadyRunning         = "Automation queue is already running",
 		playCashInit           = "Cash: ---",
 		playSeedsInit          = "Seeds: ---",
@@ -361,6 +371,8 @@ local i18n = {
 		stats_total            = "Total: ",
 		stats_winrate          = "Win Rate: ",
 		stats_money            = "Seeds Earned: ",
+		stats_punish           = "Punishments: ",
+		stats_punish_active    = "%d (Active -%d%%, %ds left)",
 		stats_lastReset        = "Last Reset: ",
 		stats_reset            = "Reset Stats",
 		stats_reset_confirm    = "Confirm Reset?",
@@ -710,6 +722,45 @@ ROW_QK:Button({
 				Callback = function()
 					Popup:ClosePopup()
 					returnToLobby()
+				end,
+			})
+			PopupRow:Button({
+				Text = L.localscript_confirm_no,
+				Callback = function()
+					Popup:ClosePopup()
+				end,
+			})
+		else
+			Msg:Warning(L.noEnv)
+		end
+	end,
+	DoubleClick = false,
+})
+
+ROW_QK:Button({
+	Text = L.btnStopQueue,
+	TextSize = fontSize or 18,
+	Callback = function(btn)
+		local GTD = getgenv().GTD
+		if GTD then
+			local s = GTD.Scripttable or Scripttable
+			if not (s and s.running) then
+				Msg:Warning(L.stopQueueNotRunning or "目前沒有運行中的佇列")
+				return
+			end
+			local Popup = Tab_main:PopupModal({ RelativeTo = btn })
+			Popup:Separator({ Text = L.stopQueueConfirm_title or "確認停止自動化佇列?" })
+			local PopupRow = Popup:Row({ Expanded = true })
+			PopupRow:Button({
+				Text = L.localscript_confirm_yes,
+				Callback = function()
+					Popup:ClosePopup()
+					if type(GTD.StopQueue) == "function" then
+						GTD.StopQueue()
+					elseif s then
+						s.stopRequested = true
+					end
+					Msg:Success(L.stopQueueSuccess or "已送出停止佇列請求")
 				end,
 			})
 			PopupRow:Button({
@@ -1219,6 +1270,17 @@ local function statsReset()
 		money     = 0,
 	}
 	statsWriteAll(allData)
+	pcall(function()
+		local sumPath = "Tsetingnil_script/GTD/Config/MacroNerf_Summary.json"
+		if isfile and isfile(sumPath) and readfile and writefile then
+			local hs = game:GetService("HttpService")
+			local ok, sum = pcall(function() return hs:JSONDecode(readfile(sumPath)) end)
+			if ok and type(sum) == "table" then
+				sum.triggerCount = 0
+				writefile(sumPath, hs:JSONEncode(sum))
+			end
+		end
+	end)
 	return allData[Stats_playerId]
 end
 
@@ -1299,6 +1361,51 @@ local statsLabel_money = Tab_playinfo:Label({
 	TextColor3 = Color3.fromRGB(240, 240, 240),
 })
 
+local function readMacroPunishInfo()
+	local count = 0
+	pcall(function()
+		local sumPath = "Tsetingnil_script/GTD/Config/MacroNerf_Summary.json"
+		if isfile and isfile(sumPath) and readfile then
+			local ok, sum = pcall(function()
+				return game:GetService("HttpService"):JSONDecode(readfile(sumPath))
+			end)
+			if ok and type(sum) == "table" and type(sum.triggerCount) == "number" then
+				count = sum.triggerCount
+			end
+		end
+	end)
+	local mn = getgenv().GTD_MacroNerf
+	local active = type(mn) == "table" and mn.active == true
+	local pct = (type(mn) == "table" and tonumber(mn.percent)) or 0
+	local timeLeft = (type(mn) == "table" and math.max(0, math.floor(tonumber(mn.timeLeft) or 0))) or 0
+	return count, active, pct, timeLeft
+end
+
+local statsLabel_punish = Tab_playinfo:Label({
+	Text = L.stats_punish .. "0",
+	TextSize = fontSize or 16,
+	NoTheme = true,
+	TextColor3 = Color3.fromRGB(240, 240, 240),
+})
+
+local function refreshPunishLabel()
+	local count, active, pct, timeLeft = readMacroPunishInfo()
+	if active then
+		statsLabel_punish.Text = L.stats_punish .. string.format(L.stats_punish_active, count, pct, timeLeft)
+		statsLabel_punish.TextColor3 = Color3.fromRGB(255, 170, 0)
+	else
+		statsLabel_punish.Text = L.stats_punish .. tostring(count)
+		statsLabel_punish.TextColor3 = Color3.fromRGB(240, 240, 240)
+	end
+end
+refreshPunishLabel()
+
+task.spawn(function()
+	while task.wait(2) do
+		pcall(refreshPunishLabel)
+	end
+end)
+
 local statsLabel_lastReset = Tab_playinfo:Label({
 	Text = L.stats_lastReset .. statsFmtTime(_statsPd.lastReset),
 	TextSize = fontSize or 14,
@@ -1312,6 +1419,7 @@ local function refreshStatsUI(pd)
 	statsLabel_total.Text     = L.stats_total     .. (pd.wins + pd.losses)
 	statsLabel_winrate.Text   = L.stats_winrate   .. statsFmtWinRate(pd.wins, pd.losses)
 	statsLabel_money.Text     = L.stats_money     .. statsComma(pd.money)
+	refreshPunishLabel()
 	statsLabel_lastReset.Text = L.stats_lastReset .. statsFmtTime(pd.lastReset)
 end
 
@@ -1721,26 +1829,26 @@ BuildScriptList()
 -- 統計數據自動追蹤（基於 GameStartTime / GameEndTime 屬性與種子差值）
 task.spawn(function()
 	local lastGameStart = nil
-	local initialSeeds = 0
+	local initialSeeds = nil
 	local trackingActive = false
 
-	-- 獲取種子數量的輔助函數
+	-- 獲取種子數量的輔助函數（資料尚未就緒時回傳 nil，避免誤當成 0）
 	local function getSeeds()
-		local seedsCount = 0
+		local seedsCount = nil
 		local ok, data = pcall(function()
 			return GTD_GetClientData()
 		end)
-		if ok and data and data.Seeds then
+		if ok and data and type(data.Seeds) == "number" then
 			seedsCount = data.Seeds
 		else
 			local lp = game:GetService("Players").LocalPlayer
-			local leaderstats = lp:FindFirstChild("leaderstats")
+			local leaderstats = lp and lp:FindFirstChild("leaderstats")
 			local seedsVal = leaderstats and leaderstats:FindFirstChild("Seeds")
-			if seedsVal then
+			if seedsVal and type(seedsVal.Value) == "number" then
 				seedsCount = seedsVal.Value
 			end
 		end
-		return tonumber(seedsCount) or 0
+		return seedsCount
 	end
 
 	-- 定期檢測屬性變化
@@ -1750,6 +1858,11 @@ task.spawn(function()
 		pcall(function()
 			local gst = GTD_WA("GameStartTime")
 			local get = GTD_WA("GameEndTime")
+
+			-- 若開局當下資料尚未就緒，於戰鬥進行中補抓初始種子數
+			if trackingActive and initialSeeds == nil then
+				initialSeeds = getSeeds()
+			end
 			
 			-- 1. 檢測到遊戲結束：有 GameEndTime 且目前處於追蹤狀態，或本地檔案中寫入了 tempResult
 			local tempResult = nil
@@ -1777,8 +1890,11 @@ task.spawn(function()
 				task.wait(2.0)
 				
 				local finalSeeds = getSeeds()
-				local earned = finalSeeds - initialSeeds
-				if earned < 0 then earned = 0 end
+				local earned = 0
+				if type(initialSeeds) == "number" and type(finalSeeds) == "number" then
+					earned = finalSeeds - initialSeeds
+					if earned < 0 then earned = 0 end
+				end
 				
 				-- 判斷勝負：優先讀取 完整.lua 寫入本地的 tempResult（防止重開後 BaseHP 重置），否則才用 BaseHP 判斷
 				local isWin = true
@@ -1800,8 +1916,9 @@ task.spawn(function()
 				-- 儲存並刷新 UI
 				local pd = statsSave(isWin, earned)
 				refreshStatsUI(pd)
-				print(string.format("[GTD統計] 🏁 戰鬥結束！勝負: %s，賺取種子: +%d (初始: %d -> 結束: %d)", 
-					isWin and "勝利" or "失敗", earned, initialSeeds, finalSeeds))
+				print(string.format("[GTD統計] 🏁 戰鬥結束！勝負: %s，賺取種子: +%d (初始: %s -> 結束: %s)", 
+					isWin and "勝利" or "失敗", earned, tostring(initialSeeds), tostring(finalSeeds)))
+				initialSeeds = nil
 
 				-- 記憶體防崩潰 + 反巨集輪換：累計場數，達 interval 場時換腳本並回大廳重開
 				matchCount = matchCount + 1
@@ -1858,7 +1975,7 @@ task.spawn(function()
 				lastGameStart = gst
 				initialSeeds = getSeeds()
 				trackingActive = true
-				print(string.format("[GTD統計] 🎮 新局開始！記錄初始種子數: %d", initialSeeds))
+				print(string.format("[GTD統計] 🎮 新局開始！記錄初始種子數: %s", tostring(initialSeeds)))
 			end
 		end)
 	end
