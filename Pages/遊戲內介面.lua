@@ -247,6 +247,8 @@ local i18n = {
 		stats_money            = "賺取種子：",
 		stats_punish           = "懲罰計數：",
 		stats_punish_active    = "%d（目前 -%d%%，剩 %ds）",
+		stats_lastPunish       = "上次懲罰：",
+		stats_never_punish     = "無",
 		stats_lastReset        = "上次重置：",
 		stats_reset            = "重置統計",
 		stats_reset_confirm    = "確認重置統計？",
@@ -377,6 +379,8 @@ local i18n = {
 		stats_money            = "Seeds Earned: ",
 		stats_punish           = "Punishments: ",
 		stats_punish_active    = "%d (Active -%d%%, %ds left)",
+		stats_lastPunish       = "Last Punishment: ",
+		stats_never_punish     = "None",
 		stats_lastReset        = "Last Reset: ",
 		stats_reset            = "Reset Stats",
 		stats_reset_confirm    = "Confirm Reset?",
@@ -1308,8 +1312,24 @@ local function statsReset()
 			local ok, sum = pcall(function() return hs:JSONDecode(readfile(sumPath)) end)
 			if ok and type(sum) == "table" then
 				sum.triggerCount = 0
+				sum.lastTriggerAt = 0
+				sum.lastTrigger = nil
+				sum.dedupExpireAt = math.max(tonumber(sum.dedupExpireAt) or 0, tonumber(sum.lastExpireAt) or 0)
+				if type(sum.players) == "table" and type(sum.players[Stats_playerId]) == "table" then
+					local ps = sum.players[Stats_playerId]
+					ps.triggerCount = 0
+					ps.lastTriggerAt = 0
+					ps.lastTrigger = nil
+					-- 保留目前尚未結束懲罰的 dedupExpireAt，防止重置統計後換場重載又把同一筆進行中的懲罰重複 +1
+					ps.dedupExpireAt = math.max(tonumber(ps.dedupExpireAt) or 0, tonumber(ps.lastExpireAt) or 0)
+				end
 				writefile(sumPath, hs:JSONEncode(sum))
 			end
+		end
+		local mn = getgenv().GTD_MacroNerf
+		if type(mn) == "table" then
+			mn.lastTriggerAt = 0
+			mn.lastTrigger = nil
 		end
 	end)
 	return allData[Stats_playerId]
@@ -1394,22 +1414,62 @@ local statsLabel_money = Tab_playinfo:Label({
 
 local function readMacroPunishInfo()
 	local count = 0
+	local lastPunishText = L.stats_never_punish
+	local fileActive, filePct, fileExpireAt = false, 0, 0
+	local now = os.time()
+
 	pcall(function()
 		local sumPath = "Tsetingnil_script/GTD/Config/MacroNerf_Summary.json"
 		if isfile and isfile(sumPath) and readfile then
 			local ok, sum = pcall(function()
 				return game:GetService("HttpService"):JSONDecode(readfile(sumPath))
 			end)
-			if ok and type(sum) == "table" and type(sum.triggerCount) == "number" then
-				count = sum.triggerCount
+			if ok and type(sum) == "table" then
+				local ps = (type(sum.players) == "table" and type(sum.players[Stats_playerId]) == "table")
+					and sum.players[Stats_playerId]
+					or sum
+				if type(ps.triggerCount) == "number" then
+					count = ps.triggerCount
+				end
+				local trigAt = tonumber(ps.lastTriggerAt) or 0
+				if trigAt > 0 then
+					lastPunishText = os.date("%Y-%m-%d %H:%M:%S", trigAt)
+				elseif type(ps.lastTrigger) == "string" and ps.lastTrigger ~= "" then
+					lastPunishText = ps.lastTrigger
+				end
+				fileActive = ps.currentActive == true
+				filePct = tonumber(ps.currentPercent) or 0
+				fileExpireAt = tonumber(ps.lastExpireAt) or 0
 			end
 		end
 	end)
+
 	local mn = getgenv().GTD_MacroNerf
-	local active = type(mn) == "table" and mn.active == true
-	local pct = (type(mn) == "table" and tonumber(mn.percent)) or 0
-	local timeLeft = (type(mn) == "table" and math.max(0, math.floor(tonumber(mn.timeLeft) or 0))) or 0
-	return count, active, pct, timeLeft
+	local active, pct, timeLeft = false, 0, 0
+	if type(mn) == "table" and mn.active == true then
+		pct = tonumber(mn.percent) or 0
+		local expAt = tonumber(mn.expireAt) or 0
+		if expAt > 0 then
+			timeLeft = math.max(0, math.floor(expAt - now))
+			active = timeLeft > 0
+		else
+			timeLeft = math.max(0, math.floor(tonumber(mn.timeLeft) or 0))
+			active = true
+		end
+		if lastPunishText == L.stats_never_punish then
+			local memTrigAt = tonumber(mn.lastTriggerAt) or 0
+			if memTrigAt > 0 then
+				lastPunishText = os.date("%Y-%m-%d %H:%M:%S", memTrigAt)
+			elseif type(mn.lastTrigger) == "string" and mn.lastTrigger ~= "" then
+				lastPunishText = mn.lastTrigger
+			end
+		end
+	elseif fileActive and fileExpireAt > now then
+		active = true
+		pct = filePct
+		timeLeft = math.max(0, math.floor(fileExpireAt - now))
+	end
+	return count, active, pct, timeLeft, lastPunishText
 end
 
 local statsLabel_punish = Tab_playinfo:Label({
@@ -1419,8 +1479,15 @@ local statsLabel_punish = Tab_playinfo:Label({
 	TextColor3 = Color3.fromRGB(240, 240, 240),
 })
 
+local statsLabel_lastPunish = Tab_playinfo:Label({
+	Text = L.stats_lastPunish .. L.stats_never_punish,
+	TextSize = fontSize or 14,
+	NoTheme = true,
+	TextColor3 = Color3.fromRGB(180, 180, 180),
+})
+
 local function refreshPunishLabel()
-	local count, active, pct, timeLeft = readMacroPunishInfo()
+	local count, active, pct, timeLeft, lastPunishText = readMacroPunishInfo()
 	if active then
 		statsLabel_punish.Text = L.stats_punish .. string.format(L.stats_punish_active, count, pct, timeLeft)
 		statsLabel_punish.TextColor3 = Color3.fromRGB(255, 170, 0)
@@ -1428,11 +1495,13 @@ local function refreshPunishLabel()
 		statsLabel_punish.Text = L.stats_punish .. tostring(count)
 		statsLabel_punish.TextColor3 = Color3.fromRGB(240, 240, 240)
 	end
+	statsLabel_lastPunish.Text = L.stats_lastPunish .. tostring(lastPunishText)
 end
 refreshPunishLabel()
 
 task.spawn(function()
 	while task.wait(2) do
+		if getgenv().GTD_UI_InstanceId ~= myInstanceId then break end
 		pcall(refreshPunishLabel)
 	end
 end)
