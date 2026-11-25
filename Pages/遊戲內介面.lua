@@ -1296,6 +1296,98 @@ local function statsSave(isWin, earned)
 	return pd
 end
 
+local PUNISH_SUMMARY_PATH = "Tsetingnil_script/GTD/Config/MacroNerf_Summary.json"
+
+local function punishDefaultEntry()
+	return {
+		everTriggered   = false,
+		triggerCount    = 0,
+		firstTrigger    = nil,
+		lastTriggerAt   = 0,
+		lastTrigger     = nil,
+		lastExpireAt    = 0,
+		dedupExpireAt   = 0,
+		lastChange      = nil,
+		currentActive   = false,
+		currentPercent  = 0,
+		currentMultiply = 1,
+	}
+end
+
+local function punishReadAll()
+	local ok, raw = pcall(function()
+		if not (isfile and isfile(PUNISH_SUMMARY_PATH) and readfile) then return {} end
+		return HttpService:JSONDecode(readfile(PUNISH_SUMMARY_PATH))
+	end)
+	if not (ok and type(raw) == "table") then
+		return {}, false
+	end
+
+	-- 比照 Ingame_Data_Config.json：頂層僅以 UserId 字串作為多帳號 key
+	local allData = {}
+	local hasUserKeys = false
+	local hadLegacyKeys = false
+
+	for k, v in pairs(raw) do
+		if type(k) == "string" and k:match("^%d+$") and type(v) == "table" then
+			allData[k] = v
+			hasUserKeys = true
+		else
+			hadLegacyKeys = true
+		end
+	end
+
+	if type(raw.players) == "table" then
+		for uid, v in pairs(raw.players) do
+			local key = tostring(uid)
+			if key:match("^%d+$") and type(v) == "table" and not allData[key] then
+				allData[key] = v
+				hasUserKeys = true
+			end
+		end
+	end
+
+	-- 舊版單帳號扁平檔一次性自動遷移至當前帳號
+	if not hasUserKeys and raw.triggerCount ~= nil then
+		allData[Stats_playerId] = {
+			everTriggered   = raw.everTriggered == true,
+			triggerCount    = tonumber(raw.triggerCount) or 0,
+			firstTrigger    = raw.firstTrigger,
+			lastTriggerAt   = tonumber(raw.lastTriggerAt) or 0,
+			lastTrigger     = raw.lastTrigger or (raw.everTriggered and raw.lastChange or nil),
+			lastExpireAt    = tonumber(raw.lastExpireAt) or 0,
+			dedupExpireAt   = tonumber(raw.dedupExpireAt) or tonumber(raw.lastExpireAt) or 0,
+			lastChange      = raw.lastChange,
+			currentActive   = raw.currentActive == true,
+			currentPercent  = tonumber(raw.currentPercent) or 0,
+			currentMultiply = tonumber(raw.currentMultiply) or 1,
+		}
+		hadLegacyKeys = true
+	end
+
+	return allData, hadLegacyKeys
+end
+
+local function punishWriteAll(allData)
+	pcall(function()
+		if not writefile then return end
+		statsEnsureFolder()
+		writefile(PUNISH_SUMMARY_PATH, HttpService:JSONEncode(allData))
+	end)
+end
+
+local function punishGetOrInit(allData, forceSave)
+	local needWrite = forceSave == true
+	if type(allData[Stats_playerId]) ~= "table" then
+		allData[Stats_playerId] = punishDefaultEntry()
+		needWrite = true
+	end
+	if needWrite then
+		punishWriteAll(allData)
+	end
+	return allData[Stats_playerId]
+end
+
 local function statsReset()
 	local allData = statsReadAll()
 	allData[Stats_playerId] = {
@@ -1306,26 +1398,16 @@ local function statsReset()
 	}
 	statsWriteAll(allData)
 	pcall(function()
-		local sumPath = "Tsetingnil_script/GTD/Config/MacroNerf_Summary.json"
-		if isfile and isfile(sumPath) and readfile and writefile then
-			local hs = game:GetService("HttpService")
-			local ok, sum = pcall(function() return hs:JSONDecode(readfile(sumPath)) end)
-			if ok and type(sum) == "table" then
-				sum.triggerCount = 0
-				sum.lastTriggerAt = 0
-				sum.lastTrigger = nil
-				sum.dedupExpireAt = math.max(tonumber(sum.dedupExpireAt) or 0, tonumber(sum.lastExpireAt) or 0)
-				if type(sum.players) == "table" and type(sum.players[Stats_playerId]) == "table" then
-					local ps = sum.players[Stats_playerId]
-					ps.triggerCount = 0
-					ps.lastTriggerAt = 0
-					ps.lastTrigger = nil
-					-- 保留目前尚未結束懲罰的 dedupExpireAt，防止重置統計後換場重載又把同一筆進行中的懲罰重複 +1
-					ps.dedupExpireAt = math.max(tonumber(ps.dedupExpireAt) or 0, tonumber(ps.lastExpireAt) or 0)
-				end
-				writefile(sumPath, hs:JSONEncode(sum))
-			end
-		end
+		local pAll, hadLegacy = punishReadAll()
+		local ps = punishGetOrInit(pAll, hadLegacy)
+		ps.triggerCount = 0
+		ps.lastTriggerAt = 0
+		ps.lastTrigger = nil
+		-- 保留目前尚未結束懲罰的 dedupExpireAt，防止重置統計後換場重載又把同一筆進行中的懲罰重複 +1
+		ps.dedupExpireAt = math.max(tonumber(ps.dedupExpireAt) or 0, tonumber(ps.lastExpireAt) or 0)
+		pAll[Stats_playerId] = ps
+		punishWriteAll(pAll)
+
 		local mn = getgenv().GTD_MacroNerf
 		if type(mn) == "table" then
 			mn.lastTriggerAt = 0
@@ -1419,29 +1501,20 @@ local function readMacroPunishInfo()
 	local now = os.time()
 
 	pcall(function()
-		local sumPath = "Tsetingnil_script/GTD/Config/MacroNerf_Summary.json"
-		if isfile and isfile(sumPath) and readfile then
-			local ok, sum = pcall(function()
-				return game:GetService("HttpService"):JSONDecode(readfile(sumPath))
-			end)
-			if ok and type(sum) == "table" then
-				local ps = (type(sum.players) == "table" and type(sum.players[Stats_playerId]) == "table")
-					and sum.players[Stats_playerId]
-					or sum
-				if type(ps.triggerCount) == "number" then
-					count = ps.triggerCount
-				end
-				local trigAt = tonumber(ps.lastTriggerAt) or 0
-				if trigAt > 0 then
-					lastPunishText = os.date("%Y-%m-%d %H:%M:%S", trigAt)
-				elseif type(ps.lastTrigger) == "string" and ps.lastTrigger ~= "" then
-					lastPunishText = ps.lastTrigger
-				end
-				fileActive = ps.currentActive == true
-				filePct = tonumber(ps.currentPercent) or 0
-				fileExpireAt = tonumber(ps.lastExpireAt) or 0
-			end
+		local pAll, hadLegacy = punishReadAll()
+		local ps = punishGetOrInit(pAll, hadLegacy)
+		if type(ps.triggerCount) == "number" then
+			count = ps.triggerCount
 		end
+		local trigAt = tonumber(ps.lastTriggerAt) or 0
+		if trigAt > 0 then
+			lastPunishText = os.date("%Y-%m-%d %H:%M:%S", trigAt)
+		elseif type(ps.lastTrigger) == "string" and ps.lastTrigger ~= "" then
+			lastPunishText = ps.lastTrigger
+		end
+		fileActive = ps.currentActive == true
+		filePct = tonumber(ps.currentPercent) or 0
+		fileExpireAt = tonumber(ps.lastExpireAt) or 0
 	end)
 
 	local mn = getgenv().GTD_MacroNerf
