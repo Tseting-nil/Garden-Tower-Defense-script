@@ -5,6 +5,7 @@
 > [!NOTE]
 > - 載入密鑰系統：`loadstring(game:HttpGet("https://raw.githubusercontent.com/Tseting-nil/Garden-Tower-Defense-script/refs/heads/main/%E5%AF%86%E9%91%B0%E7%B3%BB%E7%B5%B1.lua"))()`
 > - 載入密鑰系統後會回傳全域表 `GTD`，亦可透過 `getgenv().GTD` 或 `getgenv().GTDAPI` 確認是否已經加載。
+> - 本 API 已移除所有中文別名呼叫（例如 `GTD["裝備塔"]`），請統一使用英文 `GTD.<Method>` 呼叫。
 
 ---
 
@@ -96,10 +97,12 @@
 GTD.SetJitter(false) -- 全關
 GTD.SetJitter(true)  -- 全開（使用預設值）
 GTD.SetJitter({
-    actionDelayMin = 0.05,   -- 每個動作前隨機延遲下限（秒）
-    actionDelayMax = 0.35,   -- 每個動作前隨機延遲上限（秒）
-    placeOffsetStuds = 0.15, -- 非路徑塔放置水平微抖半徑（studs），0 為關閉
-    pathDistJitter = 0,      -- 路徑塔沿路徑距離微抖量，0 為關閉
+    actionDelayMin = 0.12,   -- 每個動作前隨機延遲下限（秒）
+    actionDelayMax = 0.65,   -- 每個動作前隨機延遲上限（秒）
+    placeOffsetStuds = 0.28, -- 非路徑塔放置圓盤水平微抖半徑（studs），0 為關閉
+    pathDistJitter = 0.25,   -- 路徑塔沿路徑距離微抖量，0 為關閉
+    restartDelayMin = 1.2,   -- 結算後重開前隨機等待下限（秒）
+    restartDelayMax = 3.4,   -- 結算後重開前隨機等待上限（秒）
 })
 ```
 
