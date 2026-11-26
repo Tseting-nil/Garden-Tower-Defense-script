@@ -25,6 +25,7 @@ if getgenv().Islobbyguiloaded then
   --return
 end
 getgenv().Islobbyguiloaded = true
+getgenv().Islobbyguiload = true
 -- 側邊通知模組
 if not getgenv().NotificationModule then
 	loadstring(game:HttpGet("https://gist.githubusercontent.com/Tseting-nil/08653e6aa9fc12a9f097bfb10e6654e7/raw/00001d614d928fc5dafce59133a012dd78419afd/%25E5%2581%25B4%25E9%2582%258A%25E9%2580%259A%25E7%259F%25A5%25E6%25A8%25A1%25E7%25B5%2584.lua"))()
@@ -748,10 +749,17 @@ Mainfunction.RefreshkeyInfo = function()
 		Scripttable.GUI.Modules.Tab_main._keyinfo.Text = (L.key_fetch_error)
 	end
 
-	-- 檢測 GTD 環境加載狀態
+	-- 檢測 GTD 環境加載狀態（修正原本每秒重複 HttpGet 載入塔效果翻譯的問題）
 	if getgenv().GTDAPI and getgenv().GTDAPI.__loaded then
 		Scripttable.GUI.Modules.Tab_main._ISAPIload.Text = L.gtd_env_loaded
-    loadstring(game:HttpGet("https://raw.githubusercontent.com/Tseting-nil/Garden-Tower-Defense-script/refs/heads/main/Pages/%E5%A1%94%E6%95%88%E6%9E%9C%E7%BF%BB%E8%AD%AF.lua"))()
+		if not getgenv().__GTD_TowerTransLoaded then
+			getgenv().__GTD_TowerTransLoaded = true
+			task.spawn(function()
+				pcall(function()
+					loadstring(game:HttpGet("https://raw.githubusercontent.com/Tseting-nil/Garden-Tower-Defense-script/refs/heads/main/Pages/%E5%A1%94%E6%95%88%E6%9E%9C%E7%BF%BB%E8%AD%AF.lua"))()
+				end)
+			end)
+		end
 	else
 		if not gtdLoadingStarted then
 			gtdLoadingStarted = true
@@ -760,8 +768,11 @@ Mainfunction.RefreshkeyInfo = function()
 			task.spawn(function()
 				pcall(function()
 					loadstring(game:HttpGet("https://raw.githubusercontent.com/Tseting-nil/Garden-Tower-Defense-script/refs/heads/main/%E5%AF%86%E9%91%B0%E7%B3%BB%E7%B5%B1.lua"))()
-          loadstring(game:HttpGet("https://raw.githubusercontent.com/Tseting-nil/Garden-Tower-Defense-script/refs/heads/main/Pages/%E5%A1%94%E6%95%88%E6%9E%9C%E7%BF%BB%E8%AD%AF.lua"))()
-        end)
+					if not getgenv().__GTD_TowerTransLoaded then
+						getgenv().__GTD_TowerTransLoaded = true
+						loadstring(game:HttpGet("https://raw.githubusercontent.com/Tseting-nil/Garden-Tower-Defense-script/refs/heads/main/Pages/%E5%A1%94%E6%95%88%E6%9E%9C%E7%BF%BB%E8%AD%AF.lua"))()
+					end
+				end)
 			end)
 		end
 

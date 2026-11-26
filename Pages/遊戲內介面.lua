@@ -829,7 +829,7 @@ function Rotation.load()
 		local entry = data[rotationUserKey()]
 		if type(entry) == "table" then
 			Rotation.pool       = type(entry.pool) == "table" and entry.pool or {}
-			Rotation.interval   = tonumber(entry.interval) or 30
+			Rotation.interval   = tonumber(entry.interval) or 20
 			Rotation.lastPicked = entry.lastPicked
 		end
 	end
@@ -2058,6 +2058,20 @@ task.spawn(function()
 
 			if isGameEnded then
 				trackingActive = false -- 立即關閉追蹤，防止重複觸發
+				local willRotateToLobby = alrEnabled and ((matchCount + 1) >= Rotation.interval)
+				-- 關鍵防競態：若本場結束即將觸發輪換回大廳，必須在 task.wait(2.0)「之前」立刻鎖定並關閉 AutoReplay，
+				-- 否則 完整.lua 的 performRestartGame 會在我們等待 2 秒結算種子期間搶先送出 RestartGame 開新局！
+				if willRotateToLobby then
+					getgenv().__GTD_RotatingToLobby = true
+					if getgenv().GTD then
+						pcall(function()
+							local mf = getgenv().GTD.Mainfunction or Mainfunction
+							if mf and mf.AutoReplay then
+								mf.AutoReplay(false)
+							end
+						end)
+					end
+				end
 				
 				-- 等待 2.0 秒讓伺服器結算並發放種子獎勵
 				task.wait(2.0)
@@ -2100,11 +2114,15 @@ task.spawn(function()
 				if alrEnabled and matchCount >= Rotation.interval then
 					print(string.format("[GTD統計] 🚨 累計達到 %d 場，自動返回大廳以釋放記憶體！", Rotation.interval))
 					matchCount = 0 -- 重置計數
+					getgenv().__GTD_RotatingToLobby = true
 					
-					-- 關閉 AutoReplay 以防重播核心在傳送前搶先執行 RestartGame
-					if getgenv().GTD and Scripttable then
+					-- 再次確認關閉 AutoReplay 以防重播核心在傳送前執行 RestartGame
+					if getgenv().GTD then
 						pcall(function()
-							Mainfunction.AutoReplay(false)
+							local mf = getgenv().GTD.Mainfunction or Mainfunction
+							if mf and mf.AutoReplay then
+								mf.AutoReplay(false)
+							end
 						end)
 					end
 					
@@ -2126,20 +2144,53 @@ task.spawn(function()
 						print("[GTD統計] " .. tostring(L.rotation_empty_pool))
 					end
 
-					-- 武裝 queue_on_teleport（TPChange 旗標版）：回大廳到達後自動載入 main → 大廳分支 EquipLoadout+SelectMap → 進關卡 → ExecuteQueue
-					-- 用 TPChange 版讓殘留未清的普通 queue 讓位（部分執行器不清舊 queue → 兩個 queue 重疊不知執行哪個）
-					if getgenv().GTD and Mainfunction then
+					-- 帶重試與 queue 補掛保護的返回大廳流程：
+					-- 運作數小時後單次 Teleport 可能因網路抖動或節流失敗（且部分執行器在 TeleportInitFailed 時會吃掉 queue_on_teleport），
+					-- 因此每次嘗試前都重新確認掛載 TPChange 版 queue；若 5 次傳送皆失敗，自動恢復關卡內 AutoReplay 避免掛機停擺！
+					local function armRotationQueue()
+						local gtd = getgenv().GTD
+						local mf = (gtd and gtd.Mainfunction) or Mainfunction
+						if mf then
+							pcall(function()
+								getgenv().__GTD_QueueArmedMode = nil
+								if mf.Queueload_TPChangeQueue then
+									mf.Queueload_TPChangeQueue("4-30場輪換")
+								elseif mf.Queueload then
+									mf.Queueload(true, "4-30場輪換")
+								end
+							end)
+						end
+					end
+
+					local tpWaitSchedule = { 12, 15, 18, 22, 25 }
+					for tpAttempt = 1, #tpWaitSchedule do
+						armRotationQueue()
+						task.wait(0.8)
+						print(string.format("[GTD統計] 🚀 發送返回大廳傳送請求 (第 %d/%d 次)...", tpAttempt, #tpWaitSchedule))
+						returnToLobby()
+						task.wait(tpWaitSchedule[tpAttempt])
+						if tostring(game.PlaceId) == "108533757090220" then
+							break
+						end
+						warn(string.format("[GTD統計] ⚠️ 返回大廳尚未完成 (第 %d/%d 次)，準備補掛 queue 並重試...", tpAttempt, #tpWaitSchedule))
+					end
+
+					-- 安全網：若 5 次傳送全因 Roblox Teleport 服務異常留在原關卡，恢復原關卡 AutoReplay 繼續刷，絕不發呆歸 0
+					if tostring(game.PlaceId) ~= "108533757090220" then
+						warn("[GTD統計] ⚠️ 多次傳送回大廳失敗，自動恢復關卡內 AutoReplay 繼續掛機！")
+						getgenv().__GTD_RotatingToLobby = false
+						armRotationQueue()
 						pcall(function()
-							if Mainfunction.Queueload_TPChangeQueue then
-								Mainfunction.Queueload_TPChangeQueue("4-30場輪換")
-							elseif Mainfunction.Queueload then
-								Mainfunction.Queueload(nil, "4-30場輪換")
+							local gtd = getgenv().GTD
+							local mf = (gtd and gtd.Mainfunction) or Mainfunction
+							if mf and mf.AutoReplay then
+								mf.AutoReplay(true)
+							end
+							if mf and mf.ResumeAutoReplay then
+								mf.ResumeAutoReplay()
 							end
 						end)
 					end
-
-					task.wait(1.0)
-					returnToLobby()
 				end
 			end
 

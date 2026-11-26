@@ -1,0 +1,4404 @@
+repeat
+	task.wait(1)
+until game:GetService("Players").LocalPlayer.PlayerGui.TeleportGui.Enabled == false
+task.wait(1)
+
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
+local TweenService = game:GetService("TweenService")
+
+-- === 裝置檢測 ===
+local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+
+local UISizes = {
+	mainFrame = isMobile and UDim2.new(0, 320, 0, 350) or UDim2.new(0, 550, 0, 480),
+	mainFrameMinimized = isMobile and UDim2.new(0, 320, 0, 50) or UDim2.new(0, 550, 0, 50),
+	mainFrameExpanded = isMobile and UDim2.new(0, 320, 0, 350) or UDim2.new(0, 550, 0, 450),
+	parameterFrame = isMobile and UDim2.new(0, 280, 0, 350) or UDim2.new(0, 360, 0, 400),
+	parameterFramePosition = isMobile and UDim2.new(0.5, -140, 0.5, -175) or UDim2.new(0.5, -180, 0.5, -200),
+	saveFrame = isMobile and UDim2.new(0, 280, 0, 200) or UDim2.new(0, 350, 0, 230),
+	saveFramePosition = isMobile and UDim2.new(0.5, -140, 0.5, -100) or UDim2.new(0.5, -175, 0.5, -115),
+	manageFrame = isMobile and UDim2.new(0, 300, 0, 350) or UDim2.new(0, 400, 0, 450),
+	manageFramePosition = isMobile and UDim2.new(0.5, -150, 0.5, -175) or UDim2.new(0.5, -200, 0.5, -225),
+	abilityFrame = isMobile and UDim2.new(0, 300, 0, 400) or UDim2.new(0, 380, 0, 450),
+}
+
+-- === UI 主題 ===
+local Theme = {
+	Background = Color3.fromRGB(25, 27, 30),
+	Surface = Color3.fromRGB(35, 38, 42),
+	SurfaceHighlight = Color3.fromRGB(45, 48, 52),
+	Border = Color3.fromRGB(60, 65, 70),
+	Text = Color3.fromRGB(230, 230, 230),
+	TextDark = Color3.fromRGB(30, 30, 30),
+	TextDim = Color3.fromRGB(160, 160, 160),
+	Accent = Color3.fromRGB(60, 160, 255),
+	AccentHover = Color3.fromRGB(90, 180, 255),
+	Success = Color3.fromRGB(100, 220, 120),
+	Warning = Color3.fromRGB(255, 180, 60),
+	Error = Color3.fromRGB(255, 80, 80),
+	Purple = Color3.fromRGB(180, 100, 255),
+	CornerRadius = UDim.new(0, 10),
+	Font = Enum.Font.GothamMedium,
+	FontBold = Enum.Font.GothamBold,
+	SizeLarge = 24,
+	SizeMedium = 16,
+	SizeNormal = 16,
+}
+
+-- === 遊戲資訊 ===
+local gameSettings = {
+	mapId = "Unknown",
+	difficulty = "Unknown",
+	modifier = "None",
+	night = false,
+	turkey = false,
+}
+
+-- === 腳本設定 ===
+local ScriptSettings = {
+	AutoReplay = true,
+	RecordSpecialMutation = false,
+	CostMode = true, -- true=錄「成本版」(Add* 閘門用消耗字串、無時間)；false=時間版
+}
+
+-- === 金錢追蹤（成本版錄製用，最終對列方案）===
+local CostTracker = {
+	LastMoney = nil,
+	Connection = nil,
+	ActionQueue = {},
+	CostHistory = {},
+}
+
+local function readMoneyNow()
+	local ok, value = pcall(function()
+		local leaderstats = Players.LocalPlayer:FindFirstChild("leaderstats")
+		local cash = leaderstats and leaderstats:FindFirstChild("Cash")
+		if not cash then return nil end
+		-- 花園塔防的 Cash 是 StringValue，且帶千分位逗號（如 "3,936"）；
+		-- 去掉非數字字元（保留負號）再轉數字。
+		local raw = cash.Value
+		if type(raw) == "number" then return raw end
+		return tonumber((tostring(raw):gsub("[^%d%-]", "")))
+	end)
+	return ok and tonumber(value) or nil
+end
+
+local function handleMoneyChange()
+	local currentMoney = readMoneyNow()
+	if not currentMoney or not CostTracker.LastMoney then
+		if currentMoney then CostTracker.LastMoney = currentMoney end
+		return
+	end
+
+	local diff = currentMoney - CostTracker.LastMoney
+	CostTracker.LastMoney = currentMoney
+
+	if diff < 0 then
+		local cost = math.abs(diff)
+		table.insert(CostTracker.CostHistory, cost)
+
+		if #CostTracker.ActionQueue > 0 then
+			local pendingAction = table.remove(CostTracker.ActionQueue, 1)
+			pendingAction.cost = cost -- 儲存 cost 給可能還沒註冊 callback 的變數
+			if type(pendingAction.callback) == "function" then
+				task.spawn(pendingAction.callback, cost)
+			end
+		end
+	end
+end
+
+function CostTracker.Init()
+	task.spawn(function()
+		local leaderstats = Players.LocalPlayer:WaitForChild("leaderstats", 10)
+		if not leaderstats then return end
+		local cash = leaderstats:WaitForChild("Cash", 5)
+		if not cash then return end
+
+		CostTracker.LastMoney = readMoneyNow()
+		if CostTracker.Connection then
+			CostTracker.Connection:Disconnect()
+		end
+		CostTracker.Connection = cash:GetPropertyChangedSignal("Value"):Connect(handleMoneyChange)
+	end)
+end
+
+function CostTracker.PushAction(callback)
+	local actionData = {
+		timestamp = os.clock(),
+		callback = callback
+	}
+	table.insert(CostTracker.ActionQueue, actionData)
+	return actionData
+end
+
+function CostTracker.CancelAction(actionData)
+	for i, v in ipairs(CostTracker.ActionQueue) do
+		if v == actionData then
+			table.remove(CostTracker.ActionQueue, i)
+			break
+		end
+	end
+end
+
+-- 初始化
+CostTracker.Init()
+
+-- === 腳本生成設定 ===
+local timeRoundUp = false
+local customComment = ""
+local autoScrollEnabled = true
+local SCRIPT_SAVE_PATH = "Tsetingnil_script/GTD/Script"
+-- GTD 重播 API（完整.lua）的載入網址；生成的重播腳本會自動 loadstring 這個 URL。
+-- 目前用本機 HTTP 伺服器（本機 RAW）測試；之後發佈再換成正式 URL。
+local GTD_API_URL = "https://raw.githubusercontent.com/Tseting-nil/Garden-Tower-Defense-script/refs/heads/main/%E5%AF%86%E9%91%B0%E7%B3%BB%E7%B5%B1.lua"
+
+-- === 語言設定 ===
+local currentLang = "zh"
+do
+	local API_VAR_PATH = "Tsetingnil_script/keysystem.json"
+	pcall(function()
+		if isfile and isfile(API_VAR_PATH) and readfile then
+			local raw = readfile(API_VAR_PATH)
+			if raw and raw ~= "" then
+				local ok, data = pcall(HttpService.JSONDecode, HttpService, raw)
+				local scriptLang = nil
+				if ok and type(data) == "table" then
+					scriptLang = data.script_language or data.language
+				else
+					scriptLang = raw:match('"script_language"%s*:%s*"([^"]+)"') or raw:match('"language"%s*:%s*"([^"]+)"')
+				end
+				
+				if scriptLang then
+					local sl = tostring(scriptLang):lower()
+					if sl:find("chinese") or sl:find("zh") then
+						currentLang = "zh"
+					elseif sl:find("english") or sl:find("en") then
+						currentLang = "en"
+					end
+				end
+			end
+		end
+	end)
+end
+
+local Lang = {
+	zh = {
+		titleMain = "花園塔防 | 排程追蹤器",
+		titleParam = "  ⚙️ 參數設定",
+		titleSave = "  💾 儲存腳本",
+		titleManage = "  📁 腳本管理",
+		titleAbility = "  ⚡ 塔能力控制台",
+		btnCopy = "📋 複製",
+		btnCopied = "✅ 已複製",
+		btnSave = "💾 儲存",
+		btnParam = "⚙️ 參數",
+		btnRefresh = "🔄 刷新",
+		btnReset = "🔄 重置追蹤器",
+		btnDebug = "🔍 塔追蹤清單",
+		btnAbility = "⚡ 能力",
+		btnConfirmSave = "✅ 確認儲存",
+		btnCancel = "❌ 取消",
+		toggleOn = "開",
+		toggleOff = "關",
+		lblInterface = "📜 介面設定",
+		lblAutoScroll = "自動捲軸",
+		lblGameInfo = "ℹ️ 遊戲資訊",
+		lblTrackerOp = "🛠️ 追蹤器操作",
+		lblScriptParam = "📝 腳本參數",
+		lblAutoReplay = "自動重播 (AutoReplay)",
+		lblFileName = "輸入腳本名稱:",
+		phFileName = "輸入腳本名稱...",
+		infoFmt = "地圖: %s\n難易度: %s\n效果: %s\n自動跳波: %s",
+		lblSaveMode = "儲存模式",
+		saveMerged = "合併",
+		saveSeparate = "分離",
+		lblPhase2Name = "指定加載名稱（前綴）",
+		logNoOps = "⚠️ 沒有可生成的操作記錄",
+		logSaved = "✅ 已儲存: %s",
+		logSaveFailed = "❌ 儲存失敗: %s",
+		logNoScripts = "尚無已儲存的腳本",
+		logCopied = "📋 已複製: %s",
+		logDeleted = "🗑️ 已刪除: %s",
+		logRunPhase1 = "▶ 執行 Phase1: %s",
+		logRunFailed = "❌ 執行失敗: %s",
+		logCopyOk = "✅ 腳本已複製到剪貼板！",
+		logCopyConsole = "⚠️ 剪貼簿不可用，腳本已存為 copy_fallback.lua",
+		logInvalidName = "⚠️ 請輸入有效的腳本名稱",
+		logReset = "🔄 追蹤器已重置",
+		logTowerListHdr = "=== 塔追蹤清單 ===",
+		logNoRecord = "  (無記錄)",
+		logSkipWave = "跳過關卡  +%.1fs",
+		logSpeedSet = "速度設定: %dx  +%.1fs",
+		logGameSetting = "設定 %s = %s  +%.1fs",
+		logDiffStart = "難易度選擇: %s → 開始計時",
+		logWaitReady = "⏳ 等待遊戲啟動 (GameRunning)...",
+		logFlow = "📋 流程：所有地圖 = GameRunning 觸發計時開始",
+		logGameEnd = "🏁 遊戲結束  總時間: %dm %ds (%.1fs)",
+		logStarted = "🎉 追蹤系統已啟動！地圖: %s  難易度: %s  效果: %s",
+		logInitFailed = "❌ 追蹤系統初始化失敗（可能不在遊戲中）",
+		logPlaceTower = "放置塔 #%d: %s  +%.1fs",
+		logPlaceTowerCost = "放置塔 #%d: %s  $%d",
+		logPlaceFailed = "⚠️ 放置塔失敗: %s (伺服器拒絕)",
+		logUpgradeLvl = "升級 #%d: %s → Lv.%d (+%d) +%.1fs",
+		logUpgradeLvlCost = "升級 #%d: %s → Lv.%d (+%d) $%d",
+		logSell = "刪除塔 #%d: %s  +%.1fs",
+		logSellUnknown = "刪除塔 [id:%s] (未追蹤)  +%.1fs",
+		logSellAll = "清除全部塔  +%.1fs",
+		logBuyPlot = "購買地塊 #%d  $%d  +%.1fs",
+		logAbility = "塔能力 #%d %s: %s  +%.1fs",
+		logAbilityUnknown = "塔能力 [id:%s] %s (未追蹤)  +%.1fs",
+		logTargeting = "調整策略 #%d %s → %s  +%.1fs",
+		logTargetingUnknown = "調整策略 [id:%s] → %s (未追蹤)  +%.1fs",
+		logTowerItem = "  #%d %s [id=%s] +%.1fs",
+		abilityFmt = "能力: %s / 冷卻: %ds",
+		abilityReady = "🟢 就緒",
+		abilityTimerFmt = "⏳ %.0fs",
+		abilityAutoLabel = "自動",
+		abilityWaitId = "⏳ 等待 ID",
+		abilityNoTowers = "尚無擁有能力的塔",
+		["Mango Barrage"] = "芒果彈幕",
+		["Timestop"] = "時間暫停",
+		["Power Up"] = "能力強化",
+		["Speed Up"] = "速度提升",
+		["Boosted Attacks"] = "強化攻擊",
+		["Energy Release"] = "能量釋放",
+		["Luck of the Draw"] = "抽牌好運",
+		["Summon Wall"] = "召喚牆壁",
+		["Vines"] = "藤蔓",
+		["Break the Chains"] = "掙脫鎖鏈",
+		["Egg Throw"] = "投擲雞蛋",
+		["Garden Transfiguration"] = "花園變身",
+		["Freezing"] = "冰凍",
+		["Range Boost"] = "射程提升",
+		["Light Up"] = "點亮",
+		["The Floor Is Lava"] = "地板是岩漿",
+		["Ash Cloud"] = "火山灰雲",
+		["The Floor Is Chocolate"] = "地板是巧克力",
+		["Electromagnetic Surge"] = "電磁浪湧",
+		["Solar Flare"] = "太陽耀斑",
+		["Tsunami"] = "海嘯",
+		["Life Transmutation"] = "生命轉換",
+		["Festive Surge"] = "節日爆發",
+		["Explode"] = "爆炸",
+		["Bangsplosion"] = "砰爆",
+		["Loveburst"] = "愛心爆發",
+		["Toggle"] = "切換",
+		commentModeTurkey = "活動模式（火雞）；普通模式請拿掉第 3 參數",
+		commentModeNight = "活動模式（夜間）；普通模式請拿掉第 3 參數",
+	},
+	en = {
+		titleMain = "Garden Tower | Tracker",
+		titleParam = "  ⚙️ Parameters",
+		titleSave = "  💾 Save Script",
+		titleManage = "  📁 Script Manager",
+		titleAbility = "  ⚡ Tower Abilities",
+		btnCopy = "📋 Copy",
+		btnCopied = "✅ Copied",
+		btnSave = "💾 Save",
+		btnParam = "⚙️ Params",
+		btnRefresh = "🔄 Refresh",
+		btnReset = "🔄 Reset",
+		btnDebug = "🔍 Tower List",
+		btnAbility = "⚡ Ability",
+		btnConfirmSave = "✅ Confirm",
+		btnCancel = "❌ Cancel",
+		toggleOn = "ON",
+		toggleOff = "OFF",
+		lblInterface = "📜 Interface",
+		lblAutoScroll = "Auto Scroll",
+		lblGameInfo = "ℹ️ Game Info",
+		lblTrackerOp = "🛠️ Tracker Ops",
+		lblScriptParam = "📝 Script Params",
+		lblAutoReplay = "Auto Replay",
+		lblFileName = "Script name:",
+		phFileName = "Enter script name...",
+		infoFmt = "Map: %s\nDifficulty: %s\nModifier: %s\nAuto Skip: %s",
+		lblSaveMode = "Save Mode",
+		saveMerged = "Merged",
+		saveSeparate = "Separate",
+		lblPhase2Name = "Phase2 Load Name (prefix)",
+		logNoOps = "⚠️ No operations recorded",
+		logSaved = "✅ Saved: %s",
+		logSaveFailed = "❌ Save failed: %s",
+		logNoScripts = "No saved scripts",
+		logCopied = "📋 Copied: %s",
+		logDeleted = "🗑️ Deleted: %s",
+		logRunPhase1 = "▶ Run Phase1: %s",
+		logRunFailed = "❌ Run failed: %s",
+		logCopyOk = "✅ Script copied to clipboard!",
+		logCopyConsole = "⚠️ Clipboard unavailable, script saved as copy_fallback.lua",
+		logInvalidName = "⚠️ Please enter a valid script name",
+		logReset = "🔄 Tracker reset",
+		logTowerListHdr = "=== Tower List ===",
+		logNoRecord = "  (empty)",
+		logSkipWave = "Skip wave  +%.1fs",
+		logSpeedSet = "Speed: %dx  +%.1fs",
+		logGameSetting = "⚙️ Setting %s = %s  +%.1fs",
+		logDiffStart = "Difficulty: %s → Timer started",
+		logWaitReady = "⏳ Waiting for game start (GameRunning)...",
+		logFlow = "📋 Flow: All maps — timer starts when GameRunning becomes true",
+		logGameEnd = "🏁 Game ended  Total: %dm %ds (%.1fs)",
+		logStarted = "🎉 Tracker started! Map: %s  Difficulty: %s  Modifier: %s",
+		logInitFailed = "❌ Tracker init failed (not in game?)",
+		logPlaceTower = "Place #%d: %s  +%.1fs",
+		logPlaceTowerCost = "Place #%d: %s  $%d",
+		logPlaceFailed = "⚠️ Place failed: %s (rejected)",
+		logUpgradeLvl = "Upgrade #%d: %s → Lv.%d (+%d) +%.1fs",
+		logUpgradeLvlCost = "Upgrade #%d: %s → Lv.%d (+%d) $%d",
+		logSell = "Sell #%d: %s  +%.1fs",
+		logSellUnknown = "Sell [id:%s] (untracked)  +%.1fs",
+		logSellAll = "Sell all towers  +%.1fs",
+		logBuyPlot = "Buy plot #%d  $%d  +%.1fs",
+		logAbility = "Ability #%d %s: %s  +%.1fs",
+		logAbilityUnknown = "Ability [id:%s] %s (untracked)  +%.1fs",
+		logTargeting = "Targeting #%d %s → %s  +%.1fs",
+		logTargetingUnknown = "Targeting [id:%s] → %s (untracked)  +%.1fs",
+		logTowerItem = "  #%d %s [id=%s] +%.1fs",
+		abilityFmt = "Ability: %s / Cooldown: %ds",
+		abilityReady = "🟢 Ready",
+		abilityTimerFmt = "⏳ %.0fs",
+		abilityAutoLabel = "Auto",
+		abilityWaitId = "⏳ Waiting ID",
+		abilityNoTowers = "No towers with abilities",
+		["Mango Barrage"] = "Mango Barrage",
+		["Timestop"] = "Timestop",
+		["Power Up"] = "Power Up",
+		["Speed Up"] = "Speed Up",
+		["Boosted Attacks"] = "Boosted Attacks",
+		["Energy Release"] = "Energy Release",
+		["Luck of the Draw"] = "Luck of the Draw",
+		["Summon Wall"] = "Summon Wall",
+		["Vines"] = "Vines",
+		["Break the Chains"] = "Break the Chains",
+		["Egg Throw"] = "Egg Throw",
+		["Garden Transfiguration"] = "Garden Transfiguration",
+		["Freezing"] = "Freezing",
+		["Range Boost"] = "Range Boost",
+		["Light Up"] = "Light Up",
+		["The Floor Is Lava"] = "The Floor Is Lava",
+		["Ash Cloud"] = "Ash Cloud",
+		["The Floor Is Chocolate"] = "The Floor Is Chocolate",
+		["Electromagnetic Surge"] = "Electromagnetic Surge",
+		["Solar Flare"] = "Solar Flare",
+		["Tsunami"] = "Tsunami",
+		["Life Transmutation"] = "Life Transmutation",
+		["Festive Surge"] = "Festive Surge",
+		["Explode"] = "Explode",
+		["Bangsplosion"] = "Bangsplosion",
+		["Loveburst"] = "Loveburst",
+		["Toggle"] = "Toggle",
+		commentModeTurkey = "Event mode (Turkey); remove 3rd param for Normal",
+		commentModeNight = "Event mode (Night); remove 3rd param for Normal",
+	},
+}
+
+local function T(key)
+	return Lang[currentLang][key] or key
+end
+
+-- === i18n 綁定系統 ===
+local i18nElements = {}
+local i18nToggleBtns = {}
+local infoLabel -- forward declaration
+local autoSkipState = {
+	on = false,
+}
+
+local function bindText(obj, key, prop)
+	prop = prop or "Text"
+	obj[prop] = T(key)
+	table.insert(i18nElements, {
+		obj = obj,
+		key = key,
+		prop = prop,
+	})
+end
+
+-- 即時讀取 AutoSkipWave。快取物件失效時（遊戲開局會重建 Settings 值，舊物件 Changed 不再觸發、
+-- Value 停在舊值）自動依路徑重抓，避免顯示/偵測錯誤。回傳明確 boolean，修正「Value=false 時誤用 fallback」的舊 bug。
+-- 花園塔防沒有 Values.Settings.AutoSkipWave；改讀遊戲內 UI 文字
+-- PlayerGui.GameGuiNoInset.Screen.Top.WaveControls.WaveControls.AutoSkip.TextLabel.Text = "Auto Skip: On/Off"
+local function readAutoSkipWave()
+	local ok, on = pcall(function()
+		local pg = Players.LocalPlayer:FindFirstChild("PlayerGui")
+		local node = pg and pg:FindFirstChild("GameGuiNoInset")
+		-- 遊戲更新後路徑：Top.WaveControls.WaveControls.AutoSkip.TextLabel
+		for _, n in ipairs({ "Screen", "Top", "WaveControls", "WaveControls", "AutoSkip", "TextLabel" }) do
+			node = node and node:FindFirstChild(n)
+		end
+		return node and node.Text and string.find(node.Text, "Auto Skip: On") ~= nil
+	end)
+	if ok and on ~= nil then
+		return on == true
+	end
+	return autoSkipState.on == true
+end
+
+local function updateInfoLabel()
+	if infoLabel then
+		local on = readAutoSkipWave()
+		local skipText = on and T("toggleOn") or T("toggleOff")
+		infoLabel.Text =
+			T("infoFmt"):format(gameSettings.mapId, gameSettings.difficulty, gameSettings.modifier, skipText)
+	end
+end
+
+local function updateI18n()
+	for _, b in ipairs(i18nElements) do
+		b.obj[b.prop] = T(b.key)
+	end
+	for _, tb in ipairs(i18nToggleBtns) do
+		local isOn = tb.getState()
+		tb.btn.Text = isOn and T("toggleOn") or T("toggleOff")
+		tb.btn.TextColor3 = isOn and Theme.TextDark or Theme.TextDim
+	end
+	updateInfoLabel()
+end
+
+-- === 追蹤狀態 — Remote 參照 ===
+local PlaceTowerRemote = nil
+local SellTowerRemote = nil
+local SkipWaveRemote = nil
+local GameSpeedRemote = nil
+local GamemodeRemote = nil
+local TowerAbilityRemote = nil
+local SellAllRemote = nil -- 花園塔防：SellAll() 一次清除場上所有塔（InvokeServer 無參數）
+local BuyPlotRemote = nil -- 活動地塊：RemoteEvents.BuyPlot:FireServer(plotId)（RemoteEvent）
+-- Luau 單一函式 local 上限 200：本次新增的輔助全放進 Ext 表，不再佔用主程式 local 名額。
+-- Ext.TargetingRemote = 塔策略 RemoteEvents.Entity_ChangeTargetingMode:FireServer(gameId, mode)
+-- Ext.AutoSkipRemote  = RemoteEvents.SetAutoSkip:FireServer(bool)
+-- Ext.targetingLog    = 塔策略記錄 { gameId, order, mode, elapsed }
+local Ext = { targetingLog = {} }
+
+-- ===== 遊戲 1.76.0：關卡狀態搬到 workspace.Contexts.<RunId>（Folder）=====
+-- 舊版屬性在 workspace（GameStartTime/Difficulty/MapId/Night/BaseHP…），新版在 Context 資料夾上，
+-- 資料夾名稱為 UUID (RunId) 或舊版 td_*；MapId/Night 改放在 Config(JSON：mapId/night)，BaseHP 變 BaseHP_<隊伍>；塔與敵人都在 Context.Entities。
+-- 以下 helper 先讀 Context，讀不到再退回 workspace（相容舊版）。
+Ext.GetContext = function()
+	local ctxs = workspace:FindFirstChild("Contexts")
+	if not ctxs then
+		return nil
+	end
+
+	local children = ctxs:GetChildren()
+	if #children == 0 then
+		return nil
+	end
+	if #children == 1 then
+		return children[1]
+	end
+
+	-- 若有多個 Context（重開殘留），選出最新/當前活躍的
+	local best = nil
+	local bestScore = -1
+
+	for _, c in ipairs(children) do
+		if c:IsA("Folder") or c:FindFirstChild("Entities") or c:GetAttribute("Config") or c:GetAttribute("RunId") then
+			local score = 0
+			-- 1. 舊版 td_%d 序號
+			local tdNum = tonumber(c.Name:match("(%d+)$"))
+			if tdNum then
+				score = tdNum * 1000
+			end
+			-- 2. 時間戳（最新局的 GameStartTime 或 DifficultyVoteEnd 較大）
+			local gst = c:GetAttribute("GameStartTime")
+			if type(gst) == "number" then
+				score = math.max(score, gst)
+			end
+			local voteEnd = c:GetAttribute("DifficultyVoteEnd")
+			if type(voteEnd) == "number" then
+				score = math.max(score, voteEnd)
+			end
+			-- 3. 若尚未結束 (無 GameEndTime 且 BaseHP_1 > 0)，優先加權
+			local endT = c:GetAttribute("GameEndTime")
+			local hp = c:GetAttribute("BaseHP_1")
+			if endT == nil and (hp == nil or hp > 0) then
+				score = score + 10000000000
+			end
+
+			if score > bestScore then
+				bestScore = score
+				best = c
+			end
+		end
+	end
+
+	return best or children[#children]
+end
+-- 目前 Context 的世界座標原點（放置座標寫成相對 Origin，重開後地圖搬到別處仍可重播）
+Ext.GetOrigin = function()
+	local ctx = Ext.GetContext()
+	local o = ctx and ctx:GetAttribute("Origin")
+	if typeof(o) == "CFrame" then
+		return o.Position
+	end
+	return Vector3.zero
+end
+Ext.ConfigField = function(ctx, key)
+	local raw = ctx and ctx:GetAttribute("Config")
+	if type(raw) ~= "string" then
+		return nil
+	end
+	local ok, data = pcall(function()
+		return game:GetService("HttpService"):JSONDecode(raw)
+	end)
+	return ok and type(data) == "table" and data[key] or nil
+end
+Ext.WA = function(name)
+	local ctx = Ext.GetContext()
+	if ctx then
+		local v = ctx:GetAttribute(name)
+		if v ~= nil then
+			return v
+		end
+		if name == "MapId" then
+			return Ext.ConfigField(ctx, "mapId") or workspace:GetAttribute(name)
+		elseif name == "Night" then
+			return (Ext.ConfigField(ctx, "night") == true) and true or workspace:GetAttribute(name)
+		elseif name == "Turkey" then
+      return Ext.ConfigField(ctx, "turkey") == true or Ext.ConfigField(ctx, "turkeyMode") == true or Ext.ConfigField(ctx, "gameMode") == "turkey" or workspace:GetAttribute("Turkey") == true or workspace:GetAttribute("turkey") == true
+		elseif name == "BaseHP" then
+			v = ctx:GetAttribute("BaseHP_1")
+			if v ~= nil then
+				return v
+			end
+		end
+	end
+	return workspace:GetAttribute(name)
+end
+Ext.WAChanged = function(name)
+	local ctx = Ext.GetContext()
+	if ctx then
+		local key = (name == "MapId" or name == "Night" or name == "Turkey") and "Config" or name
+		return ctx:GetAttributeChangedSignal(key)
+	end
+	return workspace:GetAttributeChangedSignal(name)
+end
+-- 地圖資料夾（Context.Map 或舊版 workspace.Map）
+Ext.GetMapFolder = function()
+	local ctx = Ext.GetContext()
+	return (ctx and ctx:FindFirstChild("Map")) or workspace:FindFirstChild("Map")
+end
+-- 塔/敵人容器（Context.Entities 或舊版 workspace.Map.Entities）；timeout 內等它出現
+Ext.GetEntities = function(timeout)
+	local deadline = os.clock() + (timeout or 0)
+	repeat
+		local ctx = Ext.GetContext()
+		local e = ctx and ctx:FindFirstChild("Entities")
+		if not e then
+			local m = workspace:FindFirstChild("Map")
+			e = m and m:FindFirstChild("Entities")
+		end
+		if e then
+			return e
+		end
+		if os.clock() >= deadline then
+			break
+		end
+		task.wait(0.25)
+	until false
+	return nil
+end
+-- 追蹤器自帶 UI 日誌；console 一律不輸出（部分遊戲偵測 console 特殊字元會踢人），僅轉送 GTD_Log 緩衝
+function Ext.log(level, ...)
+	local sink = getgenv().GTD_Log
+	if sink then
+		pcall(sink, level, ...)
+	end
+end
+-- 花園塔防：放置塔容器（workspace.Map.Entities），子物件帶 ID attribute = 升級/賣出用的 gameId
+local EntitiesFolder = nil
+
+-- === 追蹤狀態 — 操作記錄 ===
+local nextOrder = 1
+local orderToInfo = {}
+local idToOrder = {}
+local upgradeLog = {}
+local sellLog = {}
+local sellAllLog = {} -- 花園塔防：SellAll 一鍵清場（依序保留時間點，重播時清掉當輪所有 order 綁定）
+local skipWaveLog = {}
+local buyPlotLog = {} -- 活動地塊購買（伺服器確認 PlotUnlocked 才記；price = 購買當下 PlotPrice）
+local speedChangeLog = {}
+local abilityLog = {}
+-- 塔策略模式名稱（遊戲 Units.Behaviors.unit_base.TargetingModeEnum）
+Ext.TARGETING_MODE_NAMES = { "First", "Last", "Central", "Weakest", "Strongest", "Closest", "Random" }
+function Ext.targetingModeName(mode)
+	return Ext.TARGETING_MODE_NAMES[mode] or tostring(mode)
+end
+local gameSettingLog = {}
+-- 花園塔防：升級偵測改用「監看每塔 client 物件的 .Level 增量」，統一收手動+自動升級
+-- （取代 UpgradeUnit/ToggleAutoUpgrade remote hook）。自動升級為伺服器端執行、client 不發 UpgradeUnit，
+-- 只發一次 ToggleAutoUpgrade；但升級結果會寫回 client 塔物件的 .Level，故監看 .Level 即可一併捕捉。
+local towerObjById = {}      -- gameId -> client 塔實體物件（getgc 一次性快取）
+local lastLevelByOrder = {}  -- order -> 上次觀測到的等級（放置時 = 1）
+local lastDetectedSpeed = 1
+local diffVoteLogged = nil -- 本局已記錄過的難度投票（API 開局前會每 1.5s 重送投票，只記一次）；局結束 / 重置時清空
+local towerUUIDData = {}
+
+local gameStartAutoSkipWave = false
+
+local function getMutLabel(uuid)
+	local pdata = uuid and towerUUIDData[uuid]
+	if not pdata or not pdata.mutations or not next(pdata.mutations) then
+		return ""
+	end
+	local parts = {}
+	for k, v in pairs(pdata.mutations) do
+		local isShiny = (k == "Shiny")
+		if isShiny or ScriptSettings.RecordSpecialMutation then
+			if v == true then
+				table.insert(parts, tostring(k))
+			elseif type(v) == "string" and v ~= "" then
+				table.insert(parts, tostring(k) .. ":" .. v)
+			end
+		end
+	end
+	return #parts > 0 and (" [" .. table.concat(parts, ", ") .. "]") or ""
+end
+
+-- === 遊戲狀態追蹤 ===
+local isGameRunning = false
+local gameStartTime = nil
+local gameEndElapsed = nil
+local gameStartMapId = nil
+local mapTransitionLog = {}
+local hookTaskQueue = {}
+
+local uiVisible = true
+
+local function getElapsed()
+	if not gameStartTime then
+		return 0
+	end
+	return tick() - gameStartTime
+end
+
+-- 基準（UI 倒數校準起點）
+local function calibrateByCountdown(runGst)
+	task.spawn(function()
+		local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui", 10)
+		local overlay = playerGui and playerGui:WaitForChild("WaveCountdownOverlay", 10)
+		local waveCountdown = overlay and overlay:WaitForChild("WaveCountdown", 10)
+
+		if not waveCountdown then
+			return
+		end
+
+		local done = false
+		local connections = {}
+
+		local function disconnectAll()
+			for _, c in ipairs(connections) do
+				pcall(function()
+					c:Disconnect()
+				end)
+			end
+			table.clear(connections)
+		end
+
+		local function applyStart(newStart)
+			if isGameRunning and Ext.WA("GameStartTime") == runGst then
+				gameStartTime = newStart
+			end
+		end
+
+		local function parseText(text)
+			if type(text) ~= "string" then
+				return false
+			end
+			-- 格式 1: 純數字 "5", "4", "3", "2", "1"（來自 BigText.mount）
+			if text:match("^%s*%d+%s*$") then
+				local num = tonumber(text:match("%d+"))
+				if num and num >= 0 and num <= 10 then
+					local start = tick() - (5 - num)
+					applyStart(start)
+					return true
+				end
+			end
+
+			-- 格式 2: "Enemies arrive in %d"
+			local arriveNum = text:match("[Aa]rrive%s+in%s+(%d+)")
+			if arriveNum then
+				local num = tonumber(arriveNum)
+				if num and num >= 0 and num <= 10 then
+					local start = tick() - (5 - num)
+					applyStart(start)
+					return true
+				end
+			end
+
+			-- 格式 3: "Enemies incoming!"（BigText 在倒數結束時產生的字樣）
+			if text:match("incoming") then
+				local start = tick() - 5
+				applyStart(start)
+				return true
+			end
+
+			return false
+		end
+
+		local boundInstances = {}
+		local function checkAndBind(inst)
+			if not inst or done then
+				return
+			end
+			if not (inst:IsA("TextLabel") or inst:IsA("TextButton")) then
+				return
+			end
+			if boundInstances[inst] then
+				return
+			end
+			boundInstances[inst] = true
+
+			-- 嘗試立即讀取文字
+			local ok, curText = pcall(function()
+				return inst.Text
+			end)
+			if ok and curText and parseText(curText) then
+				done = true
+				disconnectAll()
+				return
+			end
+
+			-- 監聽 Text 屬性變動
+			local propConn = inst:GetPropertyChangedSignal("Text"):Connect(function()
+				if done then
+					return
+				end
+				local tOk, text = pcall(function()
+					return inst.Text
+				end)
+				if tOk and text and parseText(text) then
+					done = true
+					disconnectAll()
+				end
+			end)
+			table.insert(connections, propConn)
+		end
+
+		-- 1. WaveCountdown 內部檢測器：監聽子孫物件加入 (BigText 或 Caption)
+		local addConn = waveCountdown.DescendantAdded:Connect(function(descendant)
+			if done then
+				return
+			end
+			checkAndBind(descendant)
+			for _, child in ipairs(descendant:GetDescendants()) do
+				checkAndBind(child)
+			end
+		end)
+		table.insert(connections, addConn)
+
+		-- 2. WaveCountdown 內部檢測器：監聽 Caption 被刪除（倒數結束時 Caption 會被 Trove 清理銷毀）
+		local remConn = waveCountdown.DescendantRemoving:Connect(function(descendant)
+			if done then
+				return
+			end
+			if descendant.Name == "Caption" then
+				done = true
+				disconnectAll()
+				local start = tick() - 5
+				applyStart(start)
+			end
+		end)
+		table.insert(connections, remConn)
+
+		-- 3. 檢查目前已存在的所有文字物件
+		for _, desc in ipairs(waveCountdown:GetDescendants()) do
+			checkAndBind(desc)
+			if done then
+				return
+			end
+		end
+
+		task.delay(15, function()
+			if not done then
+				done = true
+				disconnectAll()
+			end
+		end)
+	end)
+end
+
+local function startGameTimer(mapId)
+	if isGameRunning then
+		return false
+	end
+	-- 花園塔防：用 workspace.GameStartTime(Unix秒) 校準錨點，支援腳本中途載入時 elapsed 從真正開局算起
+	local gst = Ext.WA("GameStartTime")
+	if type(gst) == "number" and gst > 0 then
+		local already = os.time() - gst
+		if already < 0 then already = 0 end
+		gameStartTime = tick() - already
+	else
+		gameStartTime = tick()
+	end
+	isGameRunning = true
+	gameStartMapId = mapId or gameSettings.mapId
+	gameStartAutoSkipWave = readAutoSkipWave()
+	calibrateByCountdown(gst)
+	return true
+end
+
+local function queueHookTask(fn)
+	table.insert(hookTaskQueue, fn)
+end
+
+local function flushHookTaskQueue()
+	if #hookTaskQueue == 0 then
+		return
+	end
+	local queued = hookTaskQueue
+	hookTaskQueue = {}
+	for _, fn in ipairs(queued) do
+		local ok, err = pcall(fn)
+		if not ok then
+			Ext.log("warn", "[Queued Hook Error]", err)
+		end
+	end
+end
+
+-- ============================================================
+-- 塔能力系統 狀態
+-- ============================================================
+-- 花園塔防能力資料：每個 unit 剛好「一個」PlayerTriggeredAbility（Name + Cooldown 秒）。
+-- 來源 PlayerGui.LogicHolder.ClientLoader.SharedConfig.ItemData.Units.Configs.<unit>.UnitConfig.PlayerTriggeredAbility，
+-- 一次性 dump 內嵌於此（避免每局 require 全部 468 個單位設定造成 WSA 閃退）。
+-- 可用同目錄 dump 腳本重新產生：能力資料_PlayerTriggeredAbility.lua。key = unit_id（塔 entity 名稱）。
+local GTD_ABILITY_DATA = {
+	unit_mango            = { Name = "Mango Barrage",           Cooldown = 60 },
+	unit_timekeeper       = { Name = "Timestop",               Cooldown = 60 },
+	unit_eggplantinum     = { Name = "Timestop",               Cooldown = 60 },
+	unit_easter_petal     = { Name = "Timestop",               Cooldown = 120 },
+	unit_birthday_cake    = { Name = "Timestop",               Cooldown = 60 },
+	unit_beamstock        = { Name = "Power Up",               Cooldown = 60 },
+	unit_crystal_flower   = { Name = "Power Up",               Cooldown = 90 },
+	unit_starbud          = { Name = "Power Up",               Cooldown = 45, MinLevel = 5 },
+	unit_mech_saw         = { Name = "Speed Up",               Cooldown = 60 },
+	unit_orb_stems        = { Name = "Boosted Attacks",        Cooldown = 15 },
+	unit_bunny_golem      = { Name = "Energy Release",         Cooldown = 80 },
+	unit_card_shroom      = { Name = "Luck of the Draw",       Cooldown = 60 },
+	unit_candy_cane       = { Name = "Summon Wall",            Cooldown = 30 },
+	unit_serpent          = { Name = "Summon Wall",            Cooldown = 15 },
+	unit_vine_eye         = { Name = "Vines",                  Cooldown = 105 },
+	unit_volcanic_eyeball = { Name = "Break the Chains",       Cooldown = 60 },
+	unit_egg_beam         = { Name = "Egg Throw",              Cooldown = 60, MinLevel = 5 },
+	unit_wand_flower      = { Name = "Garden Transfiguration", Cooldown = 80 },
+	unit_ice_eyeball      = { Name = "Freezing",               Cooldown = 240 },
+	unit_blossom_shooter  = { Name = "Range Boost",            Cooldown = 120 },
+	unit_lava_golem       = { Name = "Light Up",               Cooldown = 60 },
+	unit_lava_flower      = { Name = "The Floor Is Lava",      Cooldown = 30 },
+	unit_lava_shroom      = { Name = "Ash Cloud",              Cooldown = 50 },
+	unit_icecream         = { Name = "The Floor Is Chocolate", Cooldown = 45 },
+	unit_magnet           = { Name = "Electromagnetic Surge",  Cooldown = 30 },
+	unit_laser_flower     = { Name = "Solar Flare",            Cooldown = 60 },
+	unit_trident          = { Name = "Tsunami",                Cooldown = 30 },
+	unit_life_crystal     = { Name = "Life Transmutation",     Cooldown = 90 },
+	unit_green_lights     = { Name = "Festive Surge",          Cooldown = 45 },
+	unit_hw_pepper        = { Name = "Explode",                Cooldown = 15 },
+	unit_firework_billy   = { Name = "Bangsplosion",           Cooldown = 10, ReadyOnSummon = true },
+	unit_val_heart        = { Name = "Loveburst",              Cooldown = 30 },
+	-- Toggle 類能力 ReadyOnSummon=true（放置即可切換）
+	unit_stem_beam        = { Name = "Toggle",                 Cooldown = 3, Toggle = true, ReadyOnSummon = true },
+}
+
+-- key = unit_id（花園塔防一塔一能力）。回傳 { Name, Cooldown }。
+local function getAbiData(key)
+	local d = GTD_ABILITY_DATA[key]
+	if d then
+		return { Name = T(d.Name), Cooldown = d.Cooldown }
+	end
+	return {
+		Name = T(key),
+		Cooldown = 30,
+	}
+end
+
+local towersWithAbility = {} -- { [towerName] = abilityKeys[] }
+
+local abiNextOrder = 1
+local abiLiveTowers = {} -- [model] = { name, order, abilityKeys, gameId, cooldowns, savedAutoStates }
+local abiTowerCards = {} -- [model] = { container, widgets[] }
+local abiModelByGameId = {} -- [gameId] = model
+local abiPendingGameIds = {} -- { name, gameId, time }[]
+local abiGameIdCooldownHint = {} -- [gameId][abilityKey] = abiGameClock（遊戲時間戳）
+local abiEmptyLabel = nil
+local abiRemoteInFlight = {} -- [gameId:abilityKey] = true
+
+-- 遊戲時間時鐘：每幀累加 dt × 當前遊戲速度。能力冷卻是用「遊戲時間」算的，
+-- x2/x3 速度下時鐘走得快 → 冷卻較快就緒。所有冷卻時間戳一律用這個時鐘（而非真實 tick()）。
+local abiGameClock = 0
+
+-- Forward declaration：在 langBtn / stopAbilityRemoteTriggers 中被呼叫
+local rebuildAllAbilityCards
+
+local function getAbilityRemaining(info, abilityKey, cooldown)
+	local t0 = info and info.cooldowns and info.cooldowns[abilityKey]
+	if not t0 then
+		return 0
+	end
+	-- 以遊戲時間計：abiGameClock 已含速度倍率，x2/x3 時 elapsed 累積較快
+	return math.max(0, cooldown - (abiGameClock - t0))
+end
+
+local function invokeTowerAbilitySafely(model, abilityKey, cooldown)
+	if not isGameRunning or not TowerAbilityRemote then
+		return false
+	end
+
+	local info = abiLiveTowers[model]
+	if not info or not info.gameId then
+		return false
+	end
+	if getAbilityRemaining(info, abilityKey, cooldown) > 0 then
+		return false
+	end
+
+	local invokeKey = tostring(info.gameId) .. ":" .. tostring(abilityKey)
+	if abiRemoteInFlight[invokeKey] then
+		return false
+	end
+
+	local gid = info.gameId
+	abiRemoteInFlight[invokeKey] = true
+	info.cooldowns[abilityKey] = abiGameClock
+
+	task.spawn(function()
+		local ok, res = pcall(function()
+			-- 花園塔防：ActivateUnitAbility 與 UpgradeUnit/SellUnit/ToggleAutoUpgrade 同模式，只傳 gameId（數字）。
+			-- abilityKey 僅用於本地冷卻記帳，不送伺服器（一塔一能力）。
+			return TowerAbilityRemote:InvokeServer(gid)
+		end)
+		abiRemoteInFlight[invokeKey] = nil
+	end)
+
+	return true
+end
+
+local function stopAbilityRemoteTriggers()
+	abiRemoteInFlight = {}
+	abiPendingGameIds = {}
+	abiGameIdCooldownHint = {}
+	abiModelByGameId = {}
+
+	for _, info in pairs(abiLiveTowers) do
+		info.gameId = nil
+		info.cooldowns = {}
+	end
+
+	if rebuildAllAbilityCards then
+		rebuildAllAbilityCards()
+	end
+end
+
+-- ============================================================
+-- UI 建立
+-- ============================================================
+local guiParent = get_hidden_gui or gethui
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "GTDTrackerUI"
+screenGui.IgnoreGuiInset = true
+screenGui.ResetOnSpawn = false
+screenGui.Parent = guiParent and guiParent() or game:GetService("CoreGui")
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UISizes.mainFrame
+mainFrame.Position = UDim2.new(0.2, 0, 0.2, 0)
+mainFrame.BackgroundColor3 = Theme.Background
+mainFrame.BackgroundTransparency = 0.05
+mainFrame.Active = true
+mainFrame.BorderSizePixel = 0
+mainFrame.ClipsDescendants = true
+mainFrame.Parent = screenGui
+
+do
+	local c = Instance.new("UICorner")
+	c.CornerRadius = Theme.CornerRadius
+	c.Parent = mainFrame
+end
+do
+	local s = Instance.new("UIStroke")
+	s.Thickness = 1.5
+	s.Color = Theme.Border
+	s.Transparency = 0.2
+	s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	s.Parent = mainFrame
+end
+
+-- 標題欄
+local titleBar = Instance.new("Frame")
+titleBar.Size = UDim2.new(1, 0, 0, 45)
+titleBar.BackgroundColor3 = Theme.Surface
+titleBar.BorderSizePixel = 0
+titleBar.Parent = mainFrame
+titleBar.Name = "TitleBar"
+do
+	local c = Instance.new("UICorner")
+	c.CornerRadius = Theme.CornerRadius
+	c.Parent = titleBar
+end
+
+local titleBarCover = Instance.new("Frame")
+titleBarCover.Size = UDim2.new(1, 0, 0, 10)
+titleBarCover.Position = UDim2.new(0, 0, 1, -10)
+titleBarCover.BackgroundColor3 = Theme.Surface
+titleBarCover.BorderSizePixel = 0
+titleBarCover.Parent = titleBar
+
+local titleSeparator = Instance.new("Frame")
+titleSeparator.Size = UDim2.new(1, 0, 0, 1)
+titleSeparator.Position = UDim2.new(0, 0, 1, -1)
+titleSeparator.BackgroundColor3 = Theme.Border
+titleSeparator.BorderSizePixel = 0
+titleSeparator.Parent = titleBar
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -90, 1, 0)
+title.BackgroundTransparency = 1
+title.TextColor3 = Theme.Accent
+title.Font = Theme.FontBold
+title.TextSize = Theme.SizeLarge
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Position = UDim2.new(0, 10, 0, 0)
+title.Parent = titleBar
+bindText(title, "titleMain")
+
+local langBtn = Instance.new("TextButton")
+langBtn.Size = UDim2.new(0, 35, 0, 35)
+langBtn.Position = UDim2.new(1, -80, 0, 5)
+langBtn.Text = currentLang == "zh" and "EN" or "中"
+langBtn.BackgroundColor3 = Theme.SurfaceHighlight
+langBtn.TextColor3 = Theme.Accent
+langBtn.Font = Theme.FontBold
+langBtn.TextSize = 13
+langBtn.BorderSizePixel = 0
+langBtn.Parent = titleBar
+do
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, 8)
+	c.Parent = langBtn
+end
+
+langBtn.MouseButton1Click:Connect(function()
+	if currentLang == "zh" then
+		currentLang = "en"
+		langBtn.Text = "中"
+	else
+		currentLang = "zh"
+		langBtn.Text = "EN"
+	end
+	updateI18n()
+	task.spawn(function()
+		rebuildAllAbilityCards()
+	end)
+end)
+
+local minimizeBtn = Instance.new("TextButton")
+minimizeBtn.Size = UDim2.new(0, 35, 0, 35)
+minimizeBtn.Position = UDim2.new(1, -40, 0, 5)
+minimizeBtn.Text = "—"
+minimizeBtn.BackgroundColor3 = Theme.SurfaceHighlight
+minimizeBtn.TextColor3 = Theme.Text
+minimizeBtn.Font = Theme.FontBold
+minimizeBtn.TextSize = 22
+minimizeBtn.BorderSizePixel = 0
+minimizeBtn.Parent = titleBar
+do
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, 8)
+	c.Parent = minimizeBtn
+end
+
+-- 滾動框架
+local scrollFrame = Instance.new("ScrollingFrame")
+scrollFrame.Size = UDim2.new(1, -20, 1, -100)
+scrollFrame.Position = UDim2.new(0, 10, 0, 50)
+scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+scrollFrame.ScrollBarThickness = 4
+scrollFrame.BackgroundTransparency = 1
+scrollFrame.ScrollBarImageColor3 = Theme.Border
+scrollFrame.Parent = mainFrame
+
+local listLayout = Instance.new("UIListLayout")
+listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+listLayout.Padding = UDim.new(0, 8)
+listLayout.Parent = scrollFrame
+
+listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+	scrollFrame.CanvasSize = UDim2.new(0, 0, 0, listLayout.AbsoluteContentSize.Y + 10)
+end)
+
+task.spawn(function()
+	while true do
+		task.wait(0.1)
+		if scrollFrame and autoScrollEnabled then
+			pcall(function()
+				scrollFrame.CanvasPosition = Vector2.new(0, scrollFrame.CanvasSize.Y.Offset)
+			end)
+		end
+	end
+end)
+
+-- 按鈕列
+local buttonContainer = Instance.new("Frame")
+buttonContainer.Size = UDim2.new(1, -20, 0, 40)
+buttonContainer.Position = UDim2.new(0, 10, 1, -45)
+buttonContainer.BackgroundTransparency = 1
+buttonContainer.Parent = mainFrame
+
+local buttonLayout = Instance.new("UIListLayout")
+buttonLayout.FillDirection = Enum.FillDirection.Horizontal
+buttonLayout.SortOrder = Enum.SortOrder.LayoutOrder
+buttonLayout.Padding = UDim.new(0, 6)
+buttonLayout.Parent = buttonContainer
+
+local function makeBtn(textKey, bgColor, txtColor, order, widthScale)
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(widthScale or 0.25, -5, 1, 0)
+	btn.BackgroundColor3 = bgColor
+	btn.TextColor3 = txtColor
+	btn.Font = Theme.FontBold
+	btn.TextSize = Theme.SizeMedium
+	btn.BorderSizePixel = 0
+	btn.LayoutOrder = order
+	btn.Parent = buttonContainer
+	local c = Instance.new("UICorner")
+	c.CornerRadius = Theme.CornerRadius
+	c.Parent = btn
+	bindText(btn, textKey)
+	return btn
+end
+
+local copyBtn = makeBtn("btnCopy", Theme.Success, Theme.TextDark, 1, 0.25)
+local saveBtn = makeBtn("btnSave", Theme.Accent, Theme.Text, 2, 0.25)
+local Parameter = makeBtn("btnParam", Theme.SurfaceHighlight, Theme.Text, 3, 0.25)
+local abilityBtn = makeBtn("btnAbility", Theme.Purple, Theme.Text, 4, 0.25)
+
+local resetBtn
+local debugBtn
+
+-- ============================================================
+-- addLog 函數
+-- ============================================================
+local logOrder = 1
+
+local function addLog(text, color)
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(1, -10, 0, 0)
+	label.BackgroundTransparency = 1
+	label.Text = text
+	label.TextColor3 = color or Theme.Text
+	label.Font = Theme.Font
+	label.TextSize = 14
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.TextWrapped = true
+	label.AutomaticSize = Enum.AutomaticSize.Y
+	label.LayoutOrder = logOrder
+	label.Parent = scrollFrame
+	logOrder = logOrder + 1
+end
+
+-- ============================================================
+-- 參數面板 UI
+-- ============================================================
+local parameterFrame = Instance.new("Frame")
+parameterFrame.Size = UISizes.parameterFrame
+parameterFrame.Position = UISizes.parameterFramePosition
+parameterFrame.BackgroundColor3 = Theme.Background
+parameterFrame.BackgroundTransparency = 0.05
+parameterFrame.Active = true
+parameterFrame.BorderSizePixel = 0
+parameterFrame.ClipsDescendants = true
+parameterFrame.Visible = false
+parameterFrame.ZIndex = 10
+parameterFrame.Parent = screenGui
+do
+	local c = Instance.new("UICorner")
+	c.CornerRadius = Theme.CornerRadius
+	c.Parent = parameterFrame
+end
+do
+	local s = Instance.new("UIStroke")
+	s.Thickness = 1.5
+	s.Color = Theme.Border
+	s.Transparency = 0.2
+	s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	s.Parent = parameterFrame
+end
+
+local paramTitleBar = Instance.new("Frame")
+paramTitleBar.Size = UDim2.new(1, 0, 0, 45)
+paramTitleBar.BackgroundColor3 = Theme.Surface
+paramTitleBar.BorderSizePixel = 0
+paramTitleBar.ZIndex = 11
+paramTitleBar.Parent = parameterFrame
+do
+	local c = Instance.new("UICorner")
+	c.CornerRadius = Theme.CornerRadius
+	c.Parent = paramTitleBar
+end
+do
+	local f = Instance.new("Frame")
+	f.Size = UDim2.new(1, 0, 0, 10)
+	f.Position = UDim2.new(0, 0, 1, -10)
+	f.BackgroundColor3 = Theme.Surface
+	f.BorderSizePixel = 0
+	f.ZIndex = 11
+	f.Parent = paramTitleBar
+end
+
+local paramTitle = Instance.new("TextLabel")
+paramTitle.Size = UDim2.new(0.8, 0, 1, 0)
+paramTitle.BackgroundTransparency = 1
+paramTitle.TextColor3 = Theme.Text
+paramTitle.Font = Theme.FontBold
+paramTitle.TextSize = Theme.SizeLarge
+paramTitle.TextXAlignment = Enum.TextXAlignment.Left
+paramTitle.ZIndex = 12
+paramTitle.Parent = paramTitleBar
+bindText(paramTitle, "titleParam")
+
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.new(0, 35, 0, 35)
+closeBtn.Position = UDim2.new(1, -40, 0, 5)
+closeBtn.Text = "×"
+closeBtn.BackgroundColor3 = Theme.Error
+closeBtn.TextColor3 = Theme.Text
+closeBtn.Font = Theme.FontBold
+closeBtn.TextSize = 24
+closeBtn.BorderSizePixel = 0
+closeBtn.ZIndex = 12
+closeBtn.Parent = paramTitleBar
+do
+	local c = Instance.new("UICorner")
+	c.CornerRadius = Theme.CornerRadius
+	c.Parent = closeBtn
+end
+
+local paramScrollFrame = Instance.new("ScrollingFrame")
+paramScrollFrame.Size = UDim2.new(1, -20, 1, -55)
+paramScrollFrame.Position = UDim2.new(0, 10, 0, 50)
+paramScrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+paramScrollFrame.ScrollBarThickness = 4
+paramScrollFrame.BackgroundTransparency = 1
+paramScrollFrame.ZIndex = 11
+paramScrollFrame.Parent = parameterFrame
+
+local paramListLayout = Instance.new("UIListLayout")
+paramListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+paramListLayout.Padding = UDim.new(0, 8)
+paramListLayout.Parent = paramScrollFrame
+
+paramListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+	paramScrollFrame.CanvasSize = UDim2.new(0, 0, 0, paramListLayout.AbsoluteContentSize.Y + 10)
+end)
+
+-- ============================================================
+-- 儲存面板 UI
+-- ============================================================
+local saveFrame = Instance.new("Frame")
+saveFrame.Size = UISizes.saveFrame
+saveFrame.Position = UISizes.saveFramePosition
+saveFrame.BackgroundColor3 = Theme.Background
+saveFrame.BackgroundTransparency = 0.05
+saveFrame.Active = true
+saveFrame.BorderSizePixel = 0
+saveFrame.ClipsDescendants = true
+saveFrame.Visible = false
+saveFrame.ZIndex = 10
+saveFrame.Parent = screenGui
+do
+	local c = Instance.new("UICorner")
+	c.CornerRadius = Theme.CornerRadius
+	c.Parent = saveFrame
+end
+do
+	local s = Instance.new("UIStroke")
+	s.Thickness = 1.5
+	s.Color = Theme.Border
+	s.Transparency = 0.2
+	s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	s.Parent = saveFrame
+end
+
+local saveTitleBar = Instance.new("Frame")
+saveTitleBar.Size = UDim2.new(1, 0, 0, 45)
+saveTitleBar.BackgroundColor3 = Theme.Surface
+saveTitleBar.BorderSizePixel = 0
+saveTitleBar.ZIndex = 11
+saveTitleBar.Parent = saveFrame
+do
+	local c = Instance.new("UICorner")
+	c.CornerRadius = Theme.CornerRadius
+	c.Parent = saveTitleBar
+end
+do
+	local f = Instance.new("Frame")
+	f.Size = UDim2.new(1, 0, 0, 10)
+	f.Position = UDim2.new(0, 0, 1, -10)
+	f.BackgroundColor3 = Theme.Surface
+	f.BorderSizePixel = 0
+	f.ZIndex = 11
+	f.Parent = saveTitleBar
+end
+
+local saveTitle = Instance.new("TextLabel")
+saveTitle.Size = UDim2.new(0.8, 0, 1, 0)
+saveTitle.BackgroundTransparency = 1
+saveTitle.TextColor3 = Theme.Text
+saveTitle.Font = Theme.FontBold
+saveTitle.TextSize = Theme.SizeLarge
+saveTitle.TextXAlignment = Enum.TextXAlignment.Left
+saveTitle.ZIndex = 12
+saveTitle.Parent = saveTitleBar
+bindText(saveTitle, "titleSave")
+
+local saveCloseBtn = Instance.new("TextButton")
+saveCloseBtn.Size = UDim2.new(0, 35, 0, 35)
+saveCloseBtn.Position = UDim2.new(1, -40, 0, 5)
+saveCloseBtn.Text = "×"
+saveCloseBtn.BackgroundColor3 = Theme.Error
+saveCloseBtn.TextColor3 = Theme.Text
+saveCloseBtn.Font = Theme.FontBold
+saveCloseBtn.TextSize = 24
+saveCloseBtn.BorderSizePixel = 0
+saveCloseBtn.ZIndex = 12
+saveCloseBtn.Parent = saveTitleBar
+do
+	local c = Instance.new("UICorner")
+	c.CornerRadius = Theme.CornerRadius
+	c.Parent = saveCloseBtn
+end
+
+local fileNameLabel = Instance.new("TextLabel")
+fileNameLabel.Size = UDim2.new(1, -20, 0, 20)
+fileNameLabel.Position = UDim2.new(0, 10, 0, 55)
+fileNameLabel.BackgroundTransparency = 1
+fileNameLabel.TextColor3 = Theme.TextDim
+fileNameLabel.Font = Theme.Font
+fileNameLabel.TextSize = Theme.SizeNormal
+fileNameLabel.TextXAlignment = Enum.TextXAlignment.Left
+fileNameLabel.ZIndex = 12
+fileNameLabel.Parent = saveFrame
+bindText(fileNameLabel, "lblFileName")
+
+local fileNameInput = Instance.new("TextBox")
+fileNameInput.Size = UDim2.new(1, -20, 0, 35)
+fileNameInput.Position = UDim2.new(0, 10, 0, 80)
+fileNameInput.BackgroundColor3 = Theme.SurfaceHighlight
+fileNameInput.PlaceholderColor3 = Theme.TextDim
+fileNameInput.Text = ""
+fileNameInput.TextColor3 = Theme.Text
+fileNameInput.Font = Theme.Font
+fileNameInput.TextSize = Theme.SizeNormal
+fileNameInput.BorderSizePixel = 0
+fileNameInput.ClearTextOnFocus = false
+fileNameInput.ZIndex = 12
+fileNameInput.Parent = saveFrame
+do
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, 6)
+	c.Parent = fileNameInput
+end
+bindText(fileNameInput, "phFileName", "PlaceholderText")
+
+-- 指定加載名稱（前綴）：僅雙地圖 + 分離模式顯示；生成的 Phase1 用它 AddMapWait("<前綴>")
+local phase2NameLabel = Instance.new("TextLabel")
+phase2NameLabel.Size = UDim2.new(1, -20, 0, 20)
+phase2NameLabel.Position = UDim2.new(0, 10, 0, 158)
+phase2NameLabel.BackgroundTransparency = 1
+phase2NameLabel.TextColor3 = Theme.TextDim
+phase2NameLabel.Font = Theme.Font
+phase2NameLabel.TextSize = Theme.SizeNormal
+phase2NameLabel.TextXAlignment = Enum.TextXAlignment.Left
+phase2NameLabel.Visible = false
+phase2NameLabel.ZIndex = 12
+phase2NameLabel.Parent = saveFrame
+bindText(phase2NameLabel, "lblPhase2Name")
+
+local phase2NameInput = Instance.new("TextBox")
+phase2NameInput.Size = UDim2.new(1, -20, 0, 32)
+phase2NameInput.Position = UDim2.new(0, 10, 0, 180)
+phase2NameInput.BackgroundColor3 = Theme.SurfaceHighlight
+phase2NameInput.PlaceholderColor3 = Theme.TextDim
+phase2NameInput.Text = ""
+phase2NameInput.TextColor3 = Theme.Text
+phase2NameInput.Font = Theme.Font
+phase2NameInput.TextSize = Theme.SizeNormal
+phase2NameInput.BorderSizePixel = 0
+phase2NameInput.ClearTextOnFocus = false
+phase2NameInput.Visible = false
+phase2NameInput.ZIndex = 12
+phase2NameInput.Parent = saveFrame
+do
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, 6)
+	c.Parent = phase2NameInput
+end
+
+local saveModeRow = Instance.new("Frame")
+saveModeRow.Size = UDim2.new(1, -20, 0, 28)
+saveModeRow.Position = UDim2.new(0, 10, 0, 122)
+saveModeRow.BackgroundTransparency = 1
+saveModeRow.Visible = false
+saveModeRow.ZIndex = 12
+saveModeRow.Parent = saveFrame
+
+local saveModeLbl = Instance.new("TextLabel")
+saveModeLbl.Size = UDim2.new(0.45, 0, 1, 0)
+saveModeLbl.BackgroundTransparency = 1
+saveModeLbl.TextColor3 = Theme.TextDim
+saveModeLbl.Font = Theme.Font
+saveModeLbl.TextSize = Theme.SizeNormal
+saveModeLbl.TextXAlignment = Enum.TextXAlignment.Left
+saveModeLbl.ZIndex = 13
+saveModeLbl.Parent = saveModeRow
+bindText(saveModeLbl, "lblSaveMode")
+
+local saveMergedBtn = Instance.new("TextButton")
+saveMergedBtn.Size = UDim2.new(0.25, -4, 1, 0)
+saveMergedBtn.Position = UDim2.new(0.45, 0, 0, 0)
+saveMergedBtn.BackgroundColor3 = Theme.Accent
+saveMergedBtn.TextColor3 = Theme.Text
+saveMergedBtn.Font = Theme.FontBold
+saveMergedBtn.TextSize = 14
+saveMergedBtn.BorderSizePixel = 0
+saveMergedBtn.ZIndex = 13
+saveMergedBtn.Parent = saveModeRow
+do
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, 6)
+	c.Parent = saveMergedBtn
+end
+bindText(saveMergedBtn, "saveMerged")
+
+local saveSeparateBtn = Instance.new("TextButton")
+saveSeparateBtn.Size = UDim2.new(0.28, -4, 1, 0)
+saveSeparateBtn.Position = UDim2.new(0.72, 0, 0, 0)
+saveSeparateBtn.BackgroundColor3 = Theme.SurfaceHighlight
+saveSeparateBtn.TextColor3 = Theme.TextDim
+saveSeparateBtn.Font = Theme.FontBold
+saveSeparateBtn.TextSize = 14
+saveSeparateBtn.BorderSizePixel = 0
+saveSeparateBtn.ZIndex = 13
+saveSeparateBtn.Parent = saveModeRow
+do
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, 6)
+	c.Parent = saveSeparateBtn
+end
+bindText(saveSeparateBtn, "saveSeparate")
+
+local currentSaveMode = "merged"
+local relayoutSavePanel -- forward declaration（在 saveBtnContainer 建立後賦值）
+
+local function updateSaveModeButtons()
+	if currentSaveMode == "merged" then
+		saveMergedBtn.BackgroundColor3 = Theme.Accent
+		saveMergedBtn.TextColor3 = Theme.Text
+		saveSeparateBtn.BackgroundColor3 = Theme.SurfaceHighlight
+		saveSeparateBtn.TextColor3 = Theme.TextDim
+	else
+		saveMergedBtn.BackgroundColor3 = Theme.SurfaceHighlight
+		saveMergedBtn.TextColor3 = Theme.TextDim
+		saveSeparateBtn.BackgroundColor3 = Theme.Accent
+		saveSeparateBtn.TextColor3 = Theme.Text
+	end
+end
+
+saveMergedBtn.MouseButton1Click:Connect(function()
+	currentSaveMode = "merged"
+	updateSaveModeButtons()
+	if relayoutSavePanel then relayoutSavePanel() end
+end)
+saveSeparateBtn.MouseButton1Click:Connect(function()
+	currentSaveMode = "separate"
+	updateSaveModeButtons()
+	if relayoutSavePanel then relayoutSavePanel() end
+end)
+
+local saveBtnContainer = Instance.new("Frame")
+saveBtnContainer.Size = UDim2.new(1, -20, 0, 40)
+saveBtnContainer.Position = UDim2.new(0, 10, 0, 130)
+saveBtnContainer.BackgroundTransparency = 1
+saveBtnContainer.ZIndex = 12
+saveBtnContainer.Parent = saveFrame
+do
+	local l = Instance.new("UIListLayout")
+	l.FillDirection = Enum.FillDirection.Horizontal
+	l.Padding = UDim.new(0, 10)
+	l.Parent = saveBtnContainer
+end
+
+-- 依「是否雙地圖 / 合併或分離」重新排版存檔面板，並調整面板高度
+relayoutSavePanel = function()
+	local hasTransition = mapTransitionLog[1] ~= nil
+	saveModeRow.Visible = hasTransition
+	local showPhase2 = hasTransition and currentSaveMode == "separate"
+	phase2NameLabel.Visible = showPhase2
+	phase2NameInput.Visible = showPhase2
+
+	local y = 122
+	if hasTransition then
+		saveModeRow.Position = UDim2.new(0, 10, 0, y)
+		y = y + 36
+	end
+	if showPhase2 then
+		phase2NameLabel.Position = UDim2.new(0, 10, 0, y)
+		phase2NameInput.Position = UDim2.new(0, 10, 0, y + 22)
+		y = y + 22 + 32 + 12
+	end
+	saveBtnContainer.Position = UDim2.new(0, 10, 0, y)
+	local wx = UISizes.saveFrame.X
+	saveFrame.Size = UDim2.new(wx.Scale, wx.Offset, 0, y + 55)
+end
+
+local confirmSaveBtn = Instance.new("TextButton")
+confirmSaveBtn.Size = UDim2.new(0.5, -5, 1, 0)
+confirmSaveBtn.BackgroundColor3 = Theme.Success
+confirmSaveBtn.TextColor3 = Theme.TextDark
+confirmSaveBtn.Font = Theme.FontBold
+confirmSaveBtn.TextSize = Theme.SizeNormal
+confirmSaveBtn.BorderSizePixel = 0
+confirmSaveBtn.LayoutOrder = 1
+confirmSaveBtn.ZIndex = 12
+confirmSaveBtn.Parent = saveBtnContainer
+do
+	local c = Instance.new("UICorner")
+	c.CornerRadius = Theme.CornerRadius
+	c.Parent = confirmSaveBtn
+end
+bindText(confirmSaveBtn, "btnConfirmSave")
+
+local cancelSaveBtn = Instance.new("TextButton")
+cancelSaveBtn.Size = UDim2.new(0.5, -5, 1, 0)
+cancelSaveBtn.BackgroundColor3 = Theme.SurfaceHighlight
+cancelSaveBtn.TextColor3 = Theme.Text
+cancelSaveBtn.Font = Theme.FontBold
+cancelSaveBtn.TextSize = Theme.SizeNormal
+cancelSaveBtn.BorderSizePixel = 0
+cancelSaveBtn.LayoutOrder = 2
+cancelSaveBtn.ZIndex = 12
+cancelSaveBtn.Parent = saveBtnContainer
+do
+	local c = Instance.new("UICorner")
+	c.CornerRadius = Theme.CornerRadius
+	c.Parent = cancelSaveBtn
+end
+bindText(cancelSaveBtn, "btnCancel")
+
+-- ============================================================
+-- 腳本管理面板
+-- ============================================================
+local refreshScriptList
+
+local manageFrame = Instance.new("Frame")
+manageFrame.Size = UISizes.manageFrame
+manageFrame.Position = UISizes.manageFramePosition
+manageFrame.BackgroundColor3 = Theme.Background
+manageFrame.BackgroundTransparency = 0.05
+manageFrame.Active = true
+manageFrame.BorderSizePixel = 0
+manageFrame.ClipsDescendants = true
+manageFrame.Visible = false
+manageFrame.ZIndex = 10
+manageFrame.Parent = screenGui
+do
+	local c = Instance.new("UICorner")
+	c.CornerRadius = Theme.CornerRadius
+	c.Parent = manageFrame
+end
+do
+	local s = Instance.new("UIStroke")
+	s.Thickness = 1.5
+	s.Color = Theme.Border
+	s.Transparency = 0.2
+	s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	s.Parent = manageFrame
+end
+
+local manageTitleBar = Instance.new("Frame")
+manageTitleBar.Size = UDim2.new(1, 0, 0, 45)
+manageTitleBar.BackgroundColor3 = Theme.Surface
+manageTitleBar.BorderSizePixel = 0
+manageTitleBar.ZIndex = 11
+manageTitleBar.Parent = manageFrame
+do
+	local c = Instance.new("UICorner")
+	c.CornerRadius = Theme.CornerRadius
+	c.Parent = manageTitleBar
+end
+do
+	local f = Instance.new("Frame")
+	f.Size = UDim2.new(1, 0, 0, 10)
+	f.Position = UDim2.new(0, 0, 1, -10)
+	f.BackgroundColor3 = Theme.Surface
+	f.BorderSizePixel = 0
+	f.ZIndex = 11
+	f.Parent = manageTitleBar
+end
+
+local manageTitle = Instance.new("TextLabel")
+manageTitle.Size = UDim2.new(0.6, 0, 1, 0)
+manageTitle.BackgroundTransparency = 1
+manageTitle.TextColor3 = Theme.Text
+manageTitle.Font = Theme.FontBold
+manageTitle.TextSize = Theme.SizeLarge
+manageTitle.TextXAlignment = Enum.TextXAlignment.Left
+manageTitle.ZIndex = 12
+manageTitle.Parent = manageTitleBar
+bindText(manageTitle, "titleManage")
+
+local refreshScriptsBtn = Instance.new("TextButton")
+refreshScriptsBtn.Size = UDim2.new(0, 80, 0, 30)
+refreshScriptsBtn.Position = UDim2.new(1, -125, 0, 7)
+refreshScriptsBtn.BackgroundColor3 = Theme.Accent
+refreshScriptsBtn.TextColor3 = Theme.Text
+refreshScriptsBtn.Font = Theme.Font
+refreshScriptsBtn.TextSize = 14
+refreshScriptsBtn.BorderSizePixel = 0
+refreshScriptsBtn.ZIndex = 12
+refreshScriptsBtn.Parent = manageTitleBar
+do
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, 6)
+	c.Parent = refreshScriptsBtn
+end
+bindText(refreshScriptsBtn, "btnRefresh")
+
+local manageCloseBtn = Instance.new("TextButton")
+manageCloseBtn.Size = UDim2.new(0, 35, 0, 35)
+manageCloseBtn.Position = UDim2.new(1, -40, 0, 5)
+manageCloseBtn.Text = "×"
+manageCloseBtn.BackgroundColor3 = Theme.Error
+manageCloseBtn.TextColor3 = Theme.Text
+manageCloseBtn.Font = Theme.FontBold
+manageCloseBtn.TextSize = 24
+manageCloseBtn.BorderSizePixel = 0
+manageCloseBtn.ZIndex = 12
+manageCloseBtn.Parent = manageTitleBar
+do
+	local c = Instance.new("UICorner")
+	c.CornerRadius = Theme.CornerRadius
+	c.Parent = manageCloseBtn
+end
+
+local manageScrollFrame = Instance.new("ScrollingFrame")
+manageScrollFrame.Size = UDim2.new(1, -20, 1, -55)
+manageScrollFrame.Position = UDim2.new(0, 10, 0, 50)
+manageScrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+manageScrollFrame.ScrollBarThickness = 4
+manageScrollFrame.BackgroundTransparency = 1
+manageScrollFrame.ZIndex = 11
+manageScrollFrame.Parent = manageFrame
+
+local manageListLayout = Instance.new("UIListLayout")
+manageListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+manageListLayout.Padding = UDim.new(0, 6)
+manageListLayout.Parent = manageScrollFrame
+
+manageListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+	manageScrollFrame.CanvasSize = UDim2.new(0, 0, 0, manageListLayout.AbsoluteContentSize.Y + 10)
+end)
+
+-- ============================================================
+-- 塔能力面板 UI
+-- ============================================================
+local abilityFrame = Instance.new("Frame")
+abilityFrame.Size = UISizes.abilityFrame
+abilityFrame.Position = UDim2.new(0.5, 0, 0.5, -200)
+abilityFrame.BackgroundColor3 = Theme.Background
+abilityFrame.BackgroundTransparency = 0.05
+abilityFrame.Active = true
+abilityFrame.BorderSizePixel = 0
+abilityFrame.ClipsDescendants = true
+abilityFrame.Visible = false
+abilityFrame.ZIndex = 10
+abilityFrame.Parent = screenGui
+do
+	local c = Instance.new("UICorner")
+	c.CornerRadius = Theme.CornerRadius
+	c.Parent = abilityFrame
+end
+do
+	local s = Instance.new("UIStroke")
+	s.Thickness = 1.5
+	s.Color = Theme.Border
+	s.Transparency = 0.2
+	s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	s.Parent = abilityFrame
+end
+
+local abilityTitleBar = Instance.new("Frame")
+abilityTitleBar.Size = UDim2.new(1, 0, 0, 45)
+abilityTitleBar.BackgroundColor3 = Theme.Surface
+abilityTitleBar.BorderSizePixel = 0
+abilityTitleBar.ZIndex = 11
+abilityTitleBar.Parent = abilityFrame
+do
+	local c = Instance.new("UICorner")
+	c.CornerRadius = Theme.CornerRadius
+	c.Parent = abilityTitleBar
+end
+do
+	local f = Instance.new("Frame")
+	f.Size = UDim2.new(1, 0, 0, 10)
+	f.Position = UDim2.new(0, 0, 1, -10)
+	f.BackgroundColor3 = Theme.Surface
+	f.BorderSizePixel = 0
+	f.ZIndex = 11
+	f.Parent = abilityTitleBar
+end
+
+local abilityTitle = Instance.new("TextLabel")
+abilityTitle.Size = UDim2.new(0.8, 0, 1, 0)
+abilityTitle.BackgroundTransparency = 1
+abilityTitle.TextColor3 = Theme.Purple
+abilityTitle.Font = Theme.FontBold
+abilityTitle.TextSize = Theme.SizeLarge
+abilityTitle.TextXAlignment = Enum.TextXAlignment.Left
+abilityTitle.ZIndex = 12
+abilityTitle.Parent = abilityTitleBar
+bindText(abilityTitle, "titleAbility")
+
+local abilityCloseBtn = Instance.new("TextButton")
+abilityCloseBtn.Size = UDim2.new(0, 35, 0, 35)
+abilityCloseBtn.Position = UDim2.new(1, -40, 0, 5)
+abilityCloseBtn.Text = "×"
+abilityCloseBtn.BackgroundColor3 = Theme.Error
+abilityCloseBtn.TextColor3 = Theme.Text
+abilityCloseBtn.Font = Theme.FontBold
+abilityCloseBtn.TextSize = 24
+abilityCloseBtn.BorderSizePixel = 0
+abilityCloseBtn.ZIndex = 12
+abilityCloseBtn.Parent = abilityTitleBar
+do
+	local c = Instance.new("UICorner")
+	c.CornerRadius = Theme.CornerRadius
+	c.Parent = abilityCloseBtn
+end
+
+local abilityScrollFrame = Instance.new("ScrollingFrame")
+abilityScrollFrame.Size = UDim2.new(1, -20, 1, -55)
+abilityScrollFrame.Position = UDim2.new(0, 10, 0, 50)
+abilityScrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+abilityScrollFrame.ScrollBarThickness = 4
+abilityScrollFrame.BackgroundTransparency = 1
+abilityScrollFrame.ScrollBarImageColor3 = Theme.Border
+abilityScrollFrame.ZIndex = 11
+abilityScrollFrame.Parent = abilityFrame
+
+local abilityListLayout = Instance.new("UIListLayout")
+abilityListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+abilityListLayout.Padding = UDim.new(0, 8)
+abilityListLayout.Parent = abilityScrollFrame
+
+abilityListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+	abilityScrollFrame.CanvasSize = UDim2.new(0, 0, 0, abilityListLayout.AbsoluteContentSize.Y + 10)
+end)
+
+-- ============================================================
+-- 參數面板 Helper 函數
+-- ============================================================
+local function createLabel(key, parent, order)
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(1, 0, 0, 25)
+	label.BackgroundTransparency = 1
+	label.TextColor3 = Theme.TextDim
+	label.Font = Theme.FontBold
+	label.TextSize = Theme.SizeNormal
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.LayoutOrder = order
+	label.ZIndex = 13
+	label.Parent = parent
+	bindText(label, key)
+	return label
+end
+
+local function createToggle(labelKey, parent, order, defaultValue, callback, descKey)
+	local frameH = descKey and 65 or 40
+	local frame = Instance.new("Frame")
+	frame.Size = UDim2.new(1, 0, 0, frameH)
+	frame.BackgroundTransparency = 1
+	frame.LayoutOrder = order
+	frame.ZIndex = 12
+	frame.Parent = parent
+
+	local lbl = Instance.new("TextLabel")
+	lbl.Size = UDim2.new(0.75, 0, 0, 40)
+	lbl.Position = UDim2.new(0, 0, 0, 0)
+	lbl.BackgroundTransparency = 1
+	lbl.TextColor3 = Theme.Text
+	lbl.Font = Theme.Font
+	lbl.TextSize = Theme.SizeNormal
+	lbl.TextXAlignment = Enum.TextXAlignment.Left
+	lbl.ZIndex = 13
+	lbl.Parent = frame
+	bindText(lbl, labelKey)
+
+	local isOn = defaultValue
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(0, 55, 0, 28)
+	btn.Position = UDim2.new(1, -60, 0, 6)
+	btn.BackgroundColor3 = isOn and Theme.Success or Theme.SurfaceHighlight
+	btn.Text = isOn and T("toggleOn") or T("toggleOff")
+	btn.TextColor3 = isOn and Theme.TextDark or Theme.TextDim
+	btn.Font = Theme.FontBold
+	btn.TextSize = Theme.SizeNormal
+	btn.BorderSizePixel = 0
+	btn.ZIndex = 13
+	btn.Parent = frame
+	do
+		local c = Instance.new("UICorner")
+		c.CornerRadius = UDim.new(0, 14)
+		c.Parent = btn
+	end
+
+	table.insert(i18nToggleBtns, {
+		btn = btn,
+		getState = function()
+			return isOn
+		end,
+	})
+
+	btn.MouseButton1Click:Connect(function()
+		isOn = not isOn
+		btn.BackgroundColor3 = isOn and Theme.Success or Theme.SurfaceHighlight
+		btn.Text = isOn and T("toggleOn") or T("toggleOff")
+		btn.TextColor3 = isOn and Theme.TextDark or Theme.TextDim
+		if callback then
+			callback(isOn)
+		end
+	end)
+
+	if descKey then
+		local descLabel = Instance.new("TextLabel")
+		descLabel.Size = UDim2.new(1, -8, 0, 22)
+		descLabel.Position = UDim2.new(0, 4, 0, 41)
+		descLabel.BackgroundTransparency = 1
+		descLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+		descLabel.Font = Theme.Font
+		descLabel.TextSize = 14
+		descLabel.TextXAlignment = Enum.TextXAlignment.Left
+		descLabel.TextWrapped = true
+		descLabel.ZIndex = 13
+		descLabel.Parent = frame
+		bindText(descLabel, descKey)
+	end
+
+	return btn
+end
+
+-- ============================================================
+-- 參數面板控件
+-- ============================================================
+createLabel("lblInterface", paramScrollFrame, 1)
+createToggle("lblAutoScroll", paramScrollFrame, 2, true, function(v)
+	autoScrollEnabled = v
+end)
+
+createLabel("lblGameInfo", paramScrollFrame, 3)
+
+infoLabel = Instance.new("TextLabel")
+infoLabel.Size = UDim2.new(1, 0, 0, 120)
+infoLabel.BackgroundColor3 = Theme.Surface
+infoLabel.BackgroundTransparency = 0.5
+infoLabel.TextColor3 = Theme.Success
+infoLabel.Font = Theme.Font
+infoLabel.TextSize = 15
+infoLabel.TextWrapped = true
+infoLabel.LayoutOrder = 9
+infoLabel.ZIndex = 13
+infoLabel.Parent = paramScrollFrame
+do
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, 6)
+	c.Parent = infoLabel
+end
+updateInfoLabel()
+
+createLabel("lblTrackerOp", paramScrollFrame, 11)
+
+local trackerBtnContainer = Instance.new("Frame")
+trackerBtnContainer.Size = UDim2.new(1, 0, 0, 40)
+trackerBtnContainer.BackgroundTransparency = 1
+trackerBtnContainer.LayoutOrder = 12
+trackerBtnContainer.ZIndex = 12
+trackerBtnContainer.Parent = paramScrollFrame
+do
+	local l = Instance.new("UIListLayout")
+	l.FillDirection = Enum.FillDirection.Horizontal
+	l.Padding = UDim.new(0, 8)
+	l.Parent = trackerBtnContainer
+end
+
+resetBtn = Instance.new("TextButton")
+resetBtn.Size = UDim2.new(0.5, -4, 1, 0)
+resetBtn.BackgroundColor3 = Theme.SurfaceHighlight
+resetBtn.TextColor3 = Theme.Warning
+resetBtn.Font = Theme.FontBold
+resetBtn.TextSize = Theme.SizeNormal
+resetBtn.BorderSizePixel = 0
+resetBtn.LayoutOrder = 1
+resetBtn.ZIndex = 13
+resetBtn.Parent = trackerBtnContainer
+do
+	local c = Instance.new("UICorner")
+	c.CornerRadius = Theme.CornerRadius
+	c.Parent = resetBtn
+end
+bindText(resetBtn, "btnReset")
+
+debugBtn = Instance.new("TextButton")
+debugBtn.Size = UDim2.new(0.5, -4, 1, 0)
+debugBtn.BackgroundColor3 = Theme.SurfaceHighlight
+debugBtn.TextColor3 = Theme.TextDim
+debugBtn.Font = Theme.FontBold
+debugBtn.TextSize = Theme.SizeNormal
+debugBtn.BorderSizePixel = 0
+debugBtn.LayoutOrder = 2
+debugBtn.ZIndex = 13
+debugBtn.Parent = trackerBtnContainer
+do
+	local c = Instance.new("UICorner")
+	c.CornerRadius = Theme.CornerRadius
+	c.Parent = debugBtn
+end
+bindText(debugBtn, "btnDebug")
+
+createLabel("lblScriptParam", paramScrollFrame, 13)
+createToggle("lblAutoReplay", paramScrollFrame, 14, ScriptSettings.AutoReplay, function(v)
+	ScriptSettings.AutoReplay = v
+end)
+-- 已移除三個非花園塔防的切換：「成本版/時間版」（閘門已固定：滾動塔走時間、其餘走金錢）、
+-- 「記錄突變/附魔」（花園塔防放置不帶 unique，無突變資料）、「停用 Phase2 後綴」（Phase2 為 NTD 機制）。
+
+-- ============================================================
+-- 拖移功能
+-- ============================================================
+local function makeDraggable(uiElement)
+	local state = {
+		dragging = false,
+		dragStart = nil,
+		startPos = nil,
+	}
+	local renderConn = nil
+
+	local function update()
+		if not state.dragging then
+			return
+		end
+		local delta = UserInputService:GetMouseLocation() - state.dragStart
+		uiElement.Position = UDim2.new(
+			state.startPos.X.Scale,
+			state.startPos.X.Offset + delta.X,
+			state.startPos.Y.Scale,
+			state.startPos.Y.Offset + delta.Y
+		)
+	end
+
+	uiElement.InputBegan:Connect(function(input)
+		if
+			input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch
+		then
+			state.dragging = true
+			state.dragStart = UserInputService:GetMouseLocation()
+			state.startPos = uiElement.Position
+			if not renderConn then
+				renderConn = RunService.RenderStepped:Connect(update)
+			end
+		end
+	end)
+
+	uiElement.InputEnded:Connect(function(input)
+		if
+			input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch
+		then
+			state.dragging = false
+			if renderConn then
+				renderConn:Disconnect()
+				renderConn = nil
+			end
+		end
+	end)
+end
+
+makeDraggable(parameterFrame)
+makeDraggable(saveFrame)
+makeDraggable(manageFrame)
+makeDraggable(abilityFrame)
+
+local tbDrag = {
+	dragging = false,
+}
+local tbConn = nil
+titleBar.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		tbDrag.dragging = true
+		tbDrag.dragStart = UserInputService:GetMouseLocation()
+		tbDrag.startPos = mainFrame.Position
+		if not tbConn then
+			tbConn = RunService.RenderStepped:Connect(function()
+				if not tbDrag.dragging then
+					return
+				end
+				local d = UserInputService:GetMouseLocation() - tbDrag.dragStart
+				mainFrame.Position = UDim2.new(
+					tbDrag.startPos.X.Scale,
+					tbDrag.startPos.X.Offset + d.X,
+					tbDrag.startPos.Y.Scale,
+					tbDrag.startPos.Y.Offset + d.Y
+				)
+			end)
+		end
+	end
+end)
+titleBar.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		tbDrag.dragging = false
+		if tbConn then
+			tbConn:Disconnect()
+			tbConn = nil
+		end
+	end
+end)
+
+-- ============================================================
+-- 收合功能
+-- ============================================================
+local minimized = false
+local function toggleMinimize()
+	minimized = not minimized
+	scrollFrame.Visible = not minimized
+	copyBtn.Visible = not minimized
+	saveBtn.Visible = not minimized
+	Parameter.Visible = not minimized
+	abilityBtn.Visible = not minimized
+	minimizeBtn.Text = minimized and "+" or "—"
+	TweenService:Create(mainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut), {
+		Size = minimized and UISizes.mainFrameMinimized or UISizes.mainFrameExpanded,
+	}):Play()
+end
+minimizeBtn.MouseButton1Click:Connect(toggleMinimize)
+
+-- ============================================================
+-- 面板互斥
+-- ============================================================
+local function closeAllPanels()
+	parameterFrame.Visible = false
+	saveFrame.Visible = false
+	manageFrame.Visible = false
+	abilityFrame.Visible = false
+end
+
+local function closeBlockingPanels()
+	saveFrame.Visible = false
+	manageFrame.Visible = false
+end
+
+local function positionAbilityFrame()
+	if parameterFrame.Visible then
+		abilityFrame.Position = UDim2.new(
+			parameterFrame.Position.X.Scale,
+			parameterFrame.Position.X.Offset + parameterFrame.AbsoluteSize.X + 10,
+			parameterFrame.Position.Y.Scale,
+			parameterFrame.Position.Y.Offset
+		)
+	else
+		abilityFrame.Position = UDim2.new(
+			mainFrame.Position.X.Scale,
+			mainFrame.Position.X.Offset + mainFrame.AbsoluteSize.X + 10,
+			mainFrame.Position.Y.Scale,
+			mainFrame.Position.Y.Offset
+		)
+	end
+end
+
+local function openSavePanel()
+	closeAllPanels()
+	local defaultName = string.format(
+		"%s_%s_%s",
+		gameStartMapId or gameSettings.mapId or "Map",
+		gameSettings.difficulty or "Diff",
+		os.date("%Y%m%d_%H%M%S")
+	)
+	defaultName = defaultName:gsub("[^%w_%-]", "_")
+	fileNameInput.Text = defaultName
+	phase2NameInput.Text = defaultName -- 指定加載名稱預設帶主檔名（前綴）
+
+	local hasTransition = mapTransitionLog[1] ~= nil
+	if not hasTransition then
+		currentSaveMode = "merged"
+		updateSaveModeButtons()
+	end
+	relayoutSavePanel()
+
+	saveFrame.Visible = true
+end
+
+-- ============================================================
+-- 檔案操作
+-- ============================================================
+local function listScripts()
+	local scripts = {}
+	pcall(function()
+		if listfiles then
+			for _, fp in ipairs(listfiles(SCRIPT_SAVE_PATH)) do
+				if fp:match("%.lua$") then
+					local name = fp:match("([^/\\]+)%.lua$")
+					if name then
+						table.insert(scripts, {
+							name = name,
+							path = fp,
+						})
+					end
+				end
+			end
+		end
+	end)
+	table.sort(scripts, function(a, b)
+		return a.name > b.name
+	end)
+	return scripts
+end
+
+local function saveScriptToFile(fileName, content)
+	local fullPath = SCRIPT_SAVE_PATH .. "/" .. fileName .. ".lua"
+	local ok, err = pcall(function()
+		if writefile then
+			writefile(fullPath, content)
+		else
+			error("writefile unavailable")
+		end
+	end)
+	if ok then
+		addLog(T("logSaved"):format(fileName), Theme.Success)
+		return true, fullPath
+	else
+		addLog(T("logSaveFailed"):format(tostring(err)), Theme.Error)
+		return false, err
+	end
+end
+
+function refreshScriptList()
+	for _, child in pairs(manageScrollFrame:GetChildren()) do
+		if child:IsA("Frame") then
+			child:Destroy()
+		end
+	end
+	local scripts = listScripts()
+	if #scripts == 0 then
+		local el = Instance.new("TextLabel")
+		el.Size = UDim2.new(1, -10, 0, 40)
+		el.BackgroundTransparency = 1
+		el.Text = T("logNoScripts")
+		el.TextColor3 = Theme.TextDim
+		el.Font = Theme.Font
+		el.TextSize = Theme.SizeNormal
+		el.ZIndex = 12
+		el.Parent = manageScrollFrame
+		return
+	end
+	for i, script in ipairs(scripts) do
+		local item = Instance.new("Frame")
+		item.Size = UDim2.new(1, -5, 0, 45)
+		item.BackgroundColor3 = Theme.SurfaceHighlight
+		item.BackgroundTransparency = 0.3
+		item.BorderSizePixel = 0
+		item.LayoutOrder = i
+		item.ZIndex = 12
+		item.Parent = manageScrollFrame
+		do
+			local c = Instance.new("UICorner")
+			c.CornerRadius = UDim.new(0, 6)
+			c.Parent = item
+		end
+
+		local nl = Instance.new("TextLabel")
+		nl.Size = UDim2.new(1, -140, 1, 0)
+		nl.Position = UDim2.new(0, 10, 0, 0)
+		nl.BackgroundTransparency = 1
+		nl.Text = script.name
+		nl.TextColor3 = Theme.Text
+		nl.Font = Theme.Font
+		nl.TextSize = 14
+		nl.TextXAlignment = Enum.TextXAlignment.Left
+		nl.TextTruncate = Enum.TextTruncate.AtEnd
+		nl.ZIndex = 13
+		nl.Parent = item
+
+		local runBtn = Instance.new("TextButton")
+		runBtn.Size = UDim2.new(0, 35, 0, 30)
+		runBtn.Position = UDim2.new(1, -130, 0, 7)
+		runBtn.Text = "▶"
+		runBtn.BackgroundColor3 = Theme.Success
+		runBtn.TextColor3 = Theme.TextDark
+		runBtn.Font = Theme.FontBold
+		runBtn.TextSize = 16
+		runBtn.BorderSizePixel = 0
+		runBtn.ZIndex = 13
+		runBtn.Parent = item
+		do
+			local c = Instance.new("UICorner")
+			c.CornerRadius = UDim.new(0, 6)
+			c.Parent = runBtn
+		end
+
+		local cpBtn = Instance.new("TextButton")
+		cpBtn.Size = UDim2.new(0, 35, 0, 30)
+		cpBtn.Position = UDim2.new(1, -90, 0, 7)
+		cpBtn.Text = "📋"
+		cpBtn.BackgroundColor3 = Theme.Accent
+		cpBtn.TextColor3 = Theme.Text
+		cpBtn.Font = Theme.FontBold
+		cpBtn.TextSize = 16
+		cpBtn.BorderSizePixel = 0
+		cpBtn.ZIndex = 13
+		cpBtn.Parent = item
+		do
+			local c = Instance.new("UICorner")
+			c.CornerRadius = UDim.new(0, 6)
+			c.Parent = cpBtn
+		end
+
+		local dlBtn = Instance.new("TextButton")
+		dlBtn.Size = UDim2.new(0, 35, 0, 30)
+		dlBtn.Position = UDim2.new(1, -50, 0, 7)
+		dlBtn.Text = "🗑️"
+		dlBtn.BackgroundColor3 = Theme.Error
+		dlBtn.TextColor3 = Theme.Text
+		dlBtn.Font = Theme.FontBold
+		dlBtn.TextSize = 16
+		dlBtn.BorderSizePixel = 0
+		dlBtn.ZIndex = 13
+		dlBtn.Parent = item
+		do
+			local c = Instance.new("UICorner")
+			c.CornerRadius = UDim.new(0, 6)
+			c.Parent = dlBtn
+		end
+
+		local fp = script.path
+		local sname = script.name
+
+		runBtn.MouseButton1Click:Connect(function()
+			local ok2, content = pcall(function()
+				return readfile and readfile(fp) or nil
+			end)
+			if not ok2 or not content or content == "" then
+				addLog(T("logRunFailed"):format(sname), Theme.Error)
+				return
+			end
+			local loadedFn, loadErr = loadstring(content)
+			if not loadedFn then
+				addLog(T("logRunFailed"):format(tostring(loadErr)), Theme.Error)
+				return
+			end
+			addLog(T("logRunPhase1"):format(sname), Theme.Success)
+			manageFrame.Visible = false
+			task.spawn(loadedFn)
+		end)
+		cpBtn.MouseButton1Click:Connect(function()
+			local ok2, content = pcall(function()
+				return readfile and readfile(fp) or nil
+			end)
+			if ok2 and content then
+				pcall(function()
+					setclipboard(content)
+				end)
+				addLog(T("logCopied"):format(sname), Theme.Accent)
+			end
+		end)
+		dlBtn.MouseButton1Click:Connect(function()
+			pcall(function()
+				if delfile then
+					delfile(fp)
+				end
+			end)
+			addLog(T("logDeleted"):format(sname), Theme.Warning)
+			refreshScriptList()
+		end)
+	end
+end
+
+-- ============================================================
+-- 生成腳本 (writeOp / buildOperations / generatePhase2Script / generateScript)
+-- ============================================================
+local function writeOp(lines, op)
+	local rawE = op.elapsed or 0
+	local e = timeRoundUp and (math.ceil(rawE * 10) / 10) or (math.floor(rawE * 10) / 10)
+	-- 閘門固定（不給使用者選金錢/時間）：
+	--   只有滾動塔 unit_wheel_bush 的放置/升級走「時間」（沿路滾動，放置時機影響效果）；
+	--   其餘放置/升級走「金錢($)」；賣出/跳波/變速等不花錢，一律走時間。
+	local opUnitType
+	if op.type == "place" then
+		opUnitType = op.info and op.info.UnitType
+	elseif op.type == "upgrade" and op.order then
+		local placed = orderToInfo[op.order]
+		opUnitType = placed and placed.UnitType
+	end
+	local isCostGated = (op.type == "place" or op.type == "upgrade") and (opUnitType ~= "unit_wheel_bush")
+	local gate, tag
+	if isCostGated then
+		-- 優先用查表修正後的牌價（op.correctedCost）；查不到才退回錄製時的金錢 delta 推算值
+		local opCost = 0
+		if op.type == "place" then
+			opCost = op.correctedCost or (op.info and op.info.cost) or 0
+		elseif op.type == "upgrade" then
+			opCost = op.correctedCost or op.cost or 0
+		end
+		gate = string.format('"%d"', math.max(0, math.floor(opCost + 0.5)))
+		tag = "$" .. tostring(math.max(0, math.floor(opCost + 0.5)))
+	else
+		gate = string.format("%.1f", e)
+		tag = string.format("+%.1fs", e)
+	end
+
+	if op.type == "place" then
+		local info = op.info
+		local p = info.Position
+		local org = info.OriginPos or Vector3.zero
+		local x = p and (p.X - org.X) or 0
+		local y = p and (p.Y - org.Y) or 0
+		local z = p and (p.Z - org.Z) or 0
+		local rot = math.floor((info.Rotation or 0) + 0.5)
+		if info.PathIndex ~= nil then
+			-- 沿路塔（如滾動塔 unit_wheel_bush）：多帶 PathIndex / DistanceAlongPath
+			table.insert(lines, string.format(
+				'\tGTD.AddPlaceTower("%s", %s, %.3f, %.3f, %.3f, %d, %d, %.3f) -- #%d %s',
+				info.UnitType, gate, x, y, z, rot, info.PathIndex, info.DistanceAlongPath or 0, info.Index, tag))
+		else
+			table.insert(lines, string.format(
+				'\tGTD.AddPlaceTower("%s", %s, %.3f, %.3f, %.3f, %d) -- #%d %s',
+				info.UnitType, gate, x, y, z, rot, info.Index, tag))
+		end
+	elseif op.type == "upgrade" then
+		if op.order then
+			table.insert(lines, string.format("\tGTD.AddUpgradeTower(%d, %s) -- #%d %s", op.order, gate, op.order, tag))
+		else
+			table.insert(lines, string.format("\t-- WARN: upgrade untracked tower [ID:%s] %s", tostring(op.gameId), tag))
+		end
+	elseif op.type == "sell" then
+		if op.order then
+			table.insert(lines, string.format("\tGTD.AddSellTower(%d, %s) -- #%d %s", op.order, gate, op.order, tag))
+		else
+			table.insert(lines, string.format("\t-- WARN: sell untracked tower [ID:%s] %s", tostring(op.gameId), tag))
+		end
+	elseif op.type == "skipwave" then
+		table.insert(lines, string.format("\tGTD.AddSkipWave(%s) -- %s", gate, tag))
+	elseif op.type == "buyplot" then
+		-- 活動地塊：金錢閘門（錄製當下 PlotPrice）；價格未知時退回時間閘門
+		local price = math.max(0, math.floor((op.price or 0) + 0.5))
+		local plotGate = price > 0 and string.format('"%d"', price) or string.format("%.1f", e)
+		table.insert(lines, string.format("\tGTD.AddBuyPlot(%d, %s) -- plot #%d $%d +%.1fs",
+			op.plotId, plotGate, op.plotId, price, e))
+	elseif op.type == "sellall" then
+		-- 一鍵清場（時間閘門；清掉場上全部塔）。重播時 GTD 會清掉當輪所有 order 綁定。
+		table.insert(lines, string.format("\tGTD.AddSellAll(%s) -- sell all %s", gate, tag))
+	elseif op.type == "gamesetting" then
+		if op.name == "AutoSkipWave" then
+			table.insert(lines, string.format("\tGTD.AddSetAutoSkip(%s, %s) -- Auto Skip %s %s",
+				op.value == true and "true" or "false",
+				gate,
+				op.value == true and "On" or "Off",
+				tag))
+		end
+	elseif op.type == "speed" then
+		table.insert(lines, string.format("\tGTD.AddSetSpeed(%d, %s) -- Speed %dx %s", op.speed, gate, op.speed, tag))
+	elseif op.type == "towerability" then
+		-- 塔能力：時間閘門（ability 不靠金錢，gate 已是時間）。重播靠 order 反查當輪 gameId。
+		-- 未追蹤（order=nil，多為腳本載入前已放置的塔）則只留警告註解，無法重播。
+		if op.order then
+			table.insert(lines, string.format("\tGTD.AddTowerAbility(%d, %s) -- #%d %s %s",
+				op.order, gate, op.order, tostring(op.abilityName or ""), tag))
+		else
+			table.insert(lines, string.format("\t-- WARN: ability untracked tower [ID:%s] %s %s",
+				tostring(op.gameId), tostring(op.abilityName or ""), tag))
+		end
+	elseif op.type == "targeting" then
+		-- 塔策略：時間閘門；重播靠 order 反查當輪 gameId。未追蹤的塔只留警告註解。
+		if op.order then
+			table.insert(lines, string.format("\tGTD.AddSetTargeting(%d, %d, %s) -- #%d %s %s",
+				op.order, op.mode, gate, op.order, Ext.targetingModeName(op.mode), tag))
+		else
+			table.insert(lines, string.format("\t-- WARN: targeting untracked tower [ID:%s] %s %s",
+				tostring(op.gameId), Ext.targetingModeName(op.mode), tag))
+		end
+	end
+	-- autoupgrade 已移除：自動升級由 Level 監看器收成普通 upgrade，走上面的 upgrade 分支
+end
+
+local function buildOperations()
+	local operations = {}
+	for order = 1, nextOrder - 1 do
+		local info = orderToInfo[order]
+		if info then
+			table.insert(operations, {
+				type = "place",
+				order = order,
+				elapsed = info.Elapsed or 0,
+				info = info,
+			})
+		end
+	end
+	for _, up in ipairs(upgradeLog) do
+		table.insert(operations, {
+			type = "upgrade",
+			order = up.order,
+			elapsed = up.elapsed or 0,
+			gameId = up.gameId,
+			cost = up.cost,
+		})
+	end
+	for _, sl in ipairs(sellLog) do
+		table.insert(operations, {
+			type = "sell",
+			order = sl.order,
+			elapsed = sl.elapsed or 0,
+			gameId = sl.gameId,
+		})
+	end
+	for _, sk in ipairs(skipWaveLog) do
+		table.insert(operations, {
+			type = "skipwave",
+			elapsed = sk.elapsed or 0,
+		})
+	end
+	for _, bp in ipairs(buyPlotLog) do
+		table.insert(operations, {
+			type = "buyplot",
+			plotId = bp.plotId,
+			price = bp.price,
+			elapsed = bp.elapsed or 0,
+		})
+	end
+	for _, sa in ipairs(sellAllLog) do
+		table.insert(operations, {
+			type = "sellall",
+			elapsed = sa.elapsed or 0,
+		})
+	end
+	for _, sp in ipairs(speedChangeLog) do
+		table.insert(operations, {
+			type = "speed",
+			speed = sp.speed,
+			elapsed = sp.elapsed or 0,
+		})
+	end
+	for _, ab in ipairs(abilityLog) do
+		table.insert(operations, {
+			type = "towerability",
+			order = ab.order,
+			elapsed = ab.elapsed or 0,
+			gameId = ab.gameId,
+			abilityName = ab.abilityName,
+		})
+	end
+	for _, tg in ipairs(Ext.targetingLog) do
+		table.insert(operations, {
+			type = "targeting",
+			order = tg.order,
+			elapsed = tg.elapsed or 0,
+			gameId = tg.gameId,
+			mode = tg.mode,
+		})
+	end
+	for _, gs in ipairs(gameSettingLog) do
+		table.insert(operations, {
+			type = "gamesetting",
+			name = gs.name,
+			value = gs.value,
+			elapsed = gs.elapsed or 0,
+		})
+	end
+	-- autoupgrade 已移除（自動升級併入 upgradeLog，見 StartLevelWatcher）
+
+	-- 每個放置的 elapsed（給「依賴塔的操作不得早於該塔放置」夾住用）
+	local placeElapsed = {}
+	for order = 1, nextOrder - 1 do
+		local info = orderToInfo[order]
+		if info then placeElapsed[order] = info.Elapsed or 0 end
+	end
+	-- 排序鍵：升級/賣出/能力等「依賴某塔」的操作，排序時不得排在該塔的放置之前。
+	-- （修 Level 監看器在遊戲結束瞬間 gameStartTime=nil → getElapsed()=0 → 升級被記 elapsed≈0
+	--   → 排到放置前 → 重播時 orderToGameId 尚未綁定、升級被跳過的問題。）
+	-- 用 build 索引當 tiebreak 做穩定排序（放置先插入故索引較小 → 同鍵時放置排在自己的升級前）。
+	for i, op in ipairs(operations) do
+		op._i = i
+		local key = op.elapsed or 0
+		if (op.type == "upgrade" or op.type == "sell" or op.type == "towerability" or op.type == "targeting") and op.order then
+			local pe = placeElapsed[op.order]
+			if pe and key < pe then key = pe + 0.001 end
+		end
+		op._sortKey = key
+	end
+	table.sort(operations, function(a, b)
+		if a._sortKey ~= b._sortKey then return a._sortKey < b._sortKey end
+		return a._i < b._i
+	end)
+	return operations
+end
+
+-- ============================================================
+-- 花園塔防：塔價查表（取代不可靠的 Cash delta 成本推算）
+-- 註：UpgradeUnit 回傳 true=成功 / false=金錢不足沒升級（成功與否可由回傳判定，2026-06-22 實測確認）；
+-- 但「實付成本」無法由回傳得知，且 Cash delta 受收入/價格修正器干擾不準，故成本改查單位設定表。
+-- 改查單位設定 Configs.<unit_id>.UnitConfig：
+--   放置(level 1) = UnitConfig.Cost；升級到第 N+1 級 = UnitConfig.Upgrades[N].Cost
+-- 查不到（未知塔/等級超出表）則保留原 Cash delta 值當退路。
+-- 注意：此為「基礎牌價」，若該局有 md_unit_price_* 之類價格修正器會與實付有差。
+-- ============================================================
+local unitConfigCache = {}
+local unitConfigsFolder = nil
+local function getUnitConfig(unitId)
+	if unitConfigCache[unitId] ~= nil then
+		return unitConfigCache[unitId] or nil
+	end
+	if not unitConfigsFolder then
+		local node = Players.LocalPlayer:FindFirstChild("PlayerGui")
+		for _, n in ipairs({ "LogicHolder", "ClientLoader", "SharedConfig", "ItemData", "Units", "Configs" }) do
+			node = node and node:FindFirstChild(n)
+		end
+		unitConfigsFolder = node
+	end
+	local mod = unitConfigsFolder and unitConfigsFolder:FindFirstChild(unitId)
+	if not mod then
+		unitConfigCache[unitId] = false
+		return nil
+	end
+	-- require 遊戲模組前先降 thread identity 到 2 再還原
+	local getId = getthreadidentity or getidentity or get_thread_identity
+	local setId = setthreadidentity or setidentity or set_thread_identity
+	local oldId = 8
+	if getId then
+		local okId, id = pcall(getId)
+		if okId and type(id) == "number" then oldId = id end
+	end
+	if setId then pcall(setId, 2) end
+	local ok, res = pcall(require, mod)
+	if setId then pcall(setId, oldId) end
+	local cfg = ok and res or nil
+	unitConfigCache[unitId] = cfg or false
+	return cfg
+end
+
+-- level 1 = 放置；level 2,3.. = 升級到該級
+local function getUnitCost(unitId, level)
+	local cfg = unitId and getUnitConfig(unitId)
+	local uc = cfg and cfg.UnitConfig
+	if type(uc) ~= "table" then return nil end
+	if level <= 1 then
+		return type(uc.Cost) == "number" and uc.Cost or nil
+	end
+	local up = type(uc.Upgrades) == "table" and uc.Upgrades[level - 1]
+	return (type(up) == "table" and type(up.Cost) == "number") and up.Cost or nil
+end
+
+-- 升級日誌顯示用：從 fromLvl 升到 toLvl 的牌價總和（含附魔倍率）；查不到回 nil
+function Ext.getUpgradeCostSum(unitId, fromLvl, toLvl, mult)
+	local sum = 0
+	for lvl = fromLvl + 1, toLvl do
+		local price = getUnitCost(unitId, lvl)
+		if not price then
+			return nil
+		end
+		sum += math.max(0, math.floor(price * (mult or 1) + 0.5))
+	end
+	return sum
+end
+
+-- 動態補齊能力資料：GTD_ABILITY_DATA 是一次性 dump（33 塔），遊戲後續新增的能力塔
+-- （如 unit_plasma_blaster）不在表內 → 控制台不顯示、log 名稱退回 unit_id。
+-- 這裡對「場上實際出現」的未知塔惰性 require 其單位設定讀 UnitConfig.PlayerTriggeredAbility，
+-- 補進 GTD_ABILITY_DATA（只 require 真的出現的少數塔，不會像全表 require 那樣造成 WSA 閃退）。
+-- 回傳 { Name, Cooldown[, MinLevel, Toggle] } 或 nil（該塔無能力）。負結果也快取，避免每幀重複 require。
+local abilityDataChecked = {}
+local function ensureAbilityData(unitId)
+	if not unitId then return nil end
+	local d = GTD_ABILITY_DATA[unitId]
+	if d then return d end
+	if abilityDataChecked[unitId] then return nil end
+
+	local cfg = getUnitConfig(unitId)
+	if not cfg then
+		return nil -- 設定還沒就緒/require 失敗：不負快取，下次掃描再試
+	end
+	abilityDataChecked[unitId] = true -- 確實拿到設定才定案（有/無能力）
+	local uc = cfg.UnitConfig
+	local pta = type(uc) == "table" and uc.PlayerTriggeredAbility
+	if type(pta) == "table" and pta.Name then
+		local entry = {
+			Name = tostring(pta.Name),
+			Cooldown = type(pta.Cooldown) == "number" and pta.Cooldown or 30,
+		}
+		if pta.MinLevel then entry.MinLevel = pta.MinLevel end
+		if pta.Toggle then entry.Toggle = true end
+		-- ReadyOnSummon=true：放置即就緒；否則（false/nil）放置時先進入滿冷卻（與遊戲一致）
+		if pta.ReadyOnSummon then entry.ReadyOnSummon = true end
+		GTD_ABILITY_DATA[unitId] = entry
+		towersWithAbility[unitId] = { unitId }
+		Ext.log("info", string.format("[GTD Tracker] 動態補上能力塔 %s → %s (CD %ss)", unitId, entry.Name, tostring(entry.Cooldown)))
+		return entry
+	end
+	return nil
+end
+
+-- 用查表價覆寫成本 → op.correctedCost（依每塔升級次數累進等級）
+local function applyTablePriceCorrection(operations)
+	local levelByOrder = {}
+	for _, op in ipairs(operations) do
+		if op.type == "place" and op.order then
+			levelByOrder[op.order] = 1
+			local name = op.info and op.info.UnitType
+			local price = getUnitCost(name, 1)
+			if price then op.correctedCost = math.max(0, math.floor(price + 0.5)) end
+		elseif op.type == "upgrade" and op.order then
+			local lvl = (levelByOrder[op.order] or 1) + 1
+			levelByOrder[op.order] = lvl
+			local info = orderToInfo[op.order]
+			local name = info and info.UnitType
+			local price = getUnitCost(name, lvl)
+			if price then
+				-- 附魔升級價倍率（如 thrifty 0.95）；遊戲實付 = round(牌價 × 倍率)
+				local mult = info and info.upgradeCostMult or 1
+				op.correctedCost = math.max(0, math.floor(price * mult + 0.5))
+			end
+		end
+	end
+end
+
+local function generateScript(mode)
+	if nextOrder <= 1 and #upgradeLog == 0 and #skipWaveLog == 0 and #gameSettingLog == 0 and #buyPlotLog == 0 then
+		addLog(T("logNoOps"), Theme.Warning)
+		return nil
+	end
+
+	-- 收集用到的塔（去重，提示玩家在大廳裝備）
+	local usedTowers = {}
+	local seenTower = {}
+	for order = 1, nextOrder - 1 do
+		local info = orderToInfo[order]
+		if info and info.UnitType and not seenTower[info.UnitType] then
+			seenTower[info.UnitType] = true
+			table.insert(usedTowers, info.UnitType)
+		end
+	end
+
+	local operations = buildOperations()
+	applyTablePriceCorrection(operations) -- 用塔資料庫牌價覆寫成本（免疫 Cash delta 污染）
+
+	-- 花園塔防：只生成「關卡內佇列」重播腳本，呼叫 GTD 重播 API（完整.lua）。
+	local fullLines = {}
+	table.insert(fullLines, "--[[")
+	table.insert(fullLines, "")
+	table.insert(fullLines, string.format("Map: %s  |  Difficulty: %s", gameSettings.mapId, gameSettings.difficulty))
+	if gameEndElapsed then
+		table.insert(fullLines, string.format("Time: %dm %ds (%.1fs)",
+			math.floor(gameEndElapsed / 60), math.floor(gameEndElapsed % 60), gameEndElapsed))
+	end
+	table.insert(fullLines, "")
+	if customComment ~= "" then
+		table.insert(fullLines, customComment)
+		table.insert(fullLines, "")
+	end
+	if #usedTowers > 0 then
+		table.insert(fullLines, "Towers used:")
+		for _, n in ipairs(usedTowers) do
+			table.insert(fullLines, "  - " .. n)
+		end
+		table.insert(fullLines, "")
+	end
+	table.insert(fullLines, "]]")
+	table.insert(fullLines, "")
+	table.insert(fullLines, "-- GTD_API")
+	table.insert(fullLines, "local GTD = getgenv().GTD")
+	table.insert(fullLines, "if not GTD or not GTD.ExecuteQueue then")
+	table.insert(fullLines, string.format('\tloadstring(game:HttpGet("%s"))()', GTD_API_URL))
+	table.insert(fullLines, "\trepeat")
+	table.insert(fullLines, "\t\tGTD = getgenv().GTD")
+	table.insert(fullLines, "\t\tif not (GTD and GTD.ExecuteQueue) then task.wait(0.5) end")
+	table.insert(fullLines, "\tuntil GTD and GTD.ExecuteQueue")
+	table.insert(fullLines, "end")
+	table.insert(fullLines, "")
+	-- 大廳分支：在大廳執行時自動選圖+難度進關卡
+	local hasMap = type(gameSettings.mapId) == "string" and gameSettings.mapId:match("^map_") ~= nil
+	local hasDif = gameSettings.difficultyId ~= nil and gameSettings.difficultyId ~= ""
+	table.insert(fullLines, "if GTD.IsLobby() then")
+	-- 大廳：先裝備錄製用到的塔，再選圖
+	if #usedTowers > 0 then
+		local towerLits = {}
+		for _, n in ipairs(usedTowers) do
+			table.insert(towerLits, string.format('"%s"', n))
+		end
+		table.insert(fullLines, string.format(
+			'\tGTD.EquipLoadout({ %s })',
+			table.concat(towerLits, ", ")))
+	end
+	if hasMap and hasDif then
+		if gameSettings.turkey or Ext.WA("Turkey") == true then
+			table.insert(fullLines, string.format(
+				'\tGTD.SelectMap("%s", "%s", "turkey") -- %s',
+				gameSettings.mapId, gameSettings.difficultyId, T("commentModeTurkey")))
+		elseif gameSettings.night or Ext.WA("Night") == true then
+			table.insert(fullLines, string.format(
+				'\tGTD.SelectMap("%s", "%s", "night") -- %s',
+				gameSettings.mapId, gameSettings.difficultyId, T("commentModeNight")))
+		else
+			table.insert(fullLines, string.format(
+				'\tGTD.SelectMap("%s", "%s")',
+				gameSettings.mapId, gameSettings.difficultyId))
+		end
+	end
+	table.insert(fullLines, "\treturn")
+	table.insert(fullLines, "end")
+	table.insert(fullLines, "")
+	table.insert(fullLines, "if GTD.IsInGame() then")
+	table.insert(fullLines, "\t-- initialization")
+	table.insert(fullLines, "\tGTD.DeBug(false)")
+	table.insert(fullLines, "\tGTD.SetJitter({ actionDelayMin = 0.15, actionDelayMax = 0.72, placeOffsetStuds = 0.55, pathDistJitter = 0.45 })")
+	if ScriptSettings.AutoReplay then
+		table.insert(fullLines, "\tGTD.AutoReplay(true)")
+	end
+	if gameSettings.difficultyId and gameSettings.difficultyId ~= "" then
+		table.insert(fullLines, string.format('\tGTD.SelectDifficulty("%s")', gameSettings.difficultyId))
+	end
+	table.insert(fullLines, string.format("\tGTD.AddSetAutoSkip(%s, 0)", gameStartAutoSkipWave and "true" or "false"))
+	table.insert(fullLines, "\t-- Start")
+	for _, op in ipairs(operations) do
+		writeOp(fullLines, op)
+	end
+	table.insert(fullLines, "")
+	if gameEndElapsed then
+		table.insert(fullLines, string.format("\tGTD.AddEnd(%.1f)", gameEndElapsed))
+	end
+	table.insert(fullLines, "\tGTD.ExecuteQueue()")
+	table.insert(fullLines, "end")
+
+	local fullScriptContent = table.concat(fullLines, "\n")
+
+	-- 外層啟動器：載入 API → SaveLocalScript（儲存腳本供自動重播或重新連線時載入）→ 執行佇列
+	local outer = {}
+	table.insert(outer, "--[[")
+	table.insert(outer, "  Script By: GTD Place Tracker script ")
+	table.insert(outer, '  URL: loadstring(game:HttpGet("https://raw.githubusercontent.com/Tseting-nil/Garden-Tower-Defense-script/refs/heads/main/Tool/%E6%94%BE%E7%BD%AE%E8%BF%BD%E8%B9%A4%E5%99%A8.lua"))()')
+	table.insert(outer, string.format("  Map: %s  |  Difficulty: %s", gameSettings.mapId, gameSettings.difficulty))
+	if gameEndElapsed then
+		table.insert(outer, string.format("  Time: %dm %ds", math.floor(gameEndElapsed / 60), math.floor(gameEndElapsed % 60)))
+	end
+	table.insert(outer, "]]")
+	table.insert(outer, "")
+	table.insert(outer, "local fullScript = [=[")
+	table.insert(outer, fullScriptContent)
+	table.insert(outer, "]=" .. "]")
+	table.insert(outer, "")
+	table.insert(outer, "local GTD = getgenv().GTD")
+	table.insert(outer, "if not GTD or not GTD.ExecuteQueue then")
+	table.insert(outer, string.format('\tloadstring(game:HttpGet("%s"))()', GTD_API_URL))
+	table.insert(outer, "\trepeat")
+	table.insert(outer, "\t\tGTD = getgenv().GTD")
+	table.insert(outer, "\t\tif not (GTD and GTD.SaveLocalScript) then task.wait(0.5) end")
+	table.insert(outer, "\tuntil GTD and GTD.SaveLocalScript")
+	table.insert(outer, "end")
+	table.insert(outer, "")
+	table.insert(outer, "GTD.SaveLocalScript(fullScript)")
+	table.insert(outer, "loadstring(fullScript)()")
+
+	return table.concat(outer, "\n")
+end
+
+-- ============================================================
+-- 塔能力面板 卡片建構 / 管理函數
+-- ============================================================
+local abiCardOrder = 0
+
+local function buildAbilityCard(model)
+	if abiTowerCards[model] then
+		return
+	end
+	local info = abiLiveTowers[model]
+	if not info or not info.abilityKeys or #info.abilityKeys == 0 then
+		return
+	end
+
+	if abiEmptyLabel then
+		abiEmptyLabel.Visible = false
+	end
+
+	abiCardOrder = abiCardOrder + 1
+	local hasId = info.gameId ~= nil
+	local idStr = hasId and tostring(info.gameId) or "?"
+
+	local container = Instance.new("Frame")
+	container.Size = UDim2.new(1, -4, 0, 0)
+	container.AutomaticSize = Enum.AutomaticSize.Y
+	container.BackgroundColor3 = Theme.Surface
+	container.BackgroundTransparency = 0.3
+	container.BorderSizePixel = 0
+	container.LayoutOrder = abiCardOrder
+	container.ZIndex = 12
+	container.Parent = abilityScrollFrame
+	do
+		local c = Instance.new("UICorner")
+		c.CornerRadius = UDim.new(0, 8)
+		c.Parent = container
+	end
+
+	local cardLayout = Instance.new("UIListLayout")
+	cardLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	cardLayout.Padding = UDim.new(0, 4)
+	cardLayout.Parent = container
+
+	local cardPadding = Instance.new("UIPadding")
+	cardPadding.PaddingTop = UDim.new(0, 8)
+	cardPadding.PaddingBottom = UDim.new(0, 8)
+	cardPadding.PaddingLeft = UDim.new(0, 8)
+	cardPadding.PaddingRight = UDim.new(0, 8)
+	cardPadding.Parent = container
+
+	local widgets = {}
+	local saved = info.savedAutoStates or {}
+
+	for idx, key in ipairs(info.abilityKeys) do
+		local abi = getAbiData(key)
+		local capturedKey = key
+		local capturedCd = abi.Cooldown
+		local autoEnabled = saved[key] == true
+
+		local towerName = (GTD and GTD.ToName) and GTD.ToName(info.name) or info.name
+		local titleLabel = Instance.new("TextLabel")
+		titleLabel.Size = UDim2.new(1, 0, 0, 18)
+		titleLabel.BackgroundTransparency = 1
+		titleLabel.Text = string.format("#%d  %s  [ID: %s]", info.order, towerName, idStr)
+		titleLabel.TextColor3 = Theme.Accent
+		titleLabel.Font = Theme.FontBold
+		titleLabel.TextSize = 14
+		titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+		titleLabel.TextTruncate = Enum.TextTruncate.AtEnd
+		titleLabel.LayoutOrder = idx * 10
+		titleLabel.ZIndex = 13
+		titleLabel.Parent = container
+
+		local descLabel = Instance.new("TextLabel")
+		descLabel.Size = UDim2.new(1, 0, 0, 16)
+		descLabel.BackgroundTransparency = 1
+		descLabel.Text = T("abilityFmt"):format(abi.Name, abi.Cooldown)
+		descLabel.TextColor3 = Theme.TextDim
+		descLabel.Font = Theme.Font
+		descLabel.TextSize = 12
+		descLabel.TextXAlignment = Enum.TextXAlignment.Left
+		descLabel.TextTruncate = Enum.TextTruncate.AtEnd
+		descLabel.LayoutOrder = idx * 10 + 1
+		descLabel.ZIndex = 13
+		descLabel.Parent = container
+
+		local btnRow = Instance.new("Frame")
+		btnRow.Size = UDim2.new(1, 0, 0, 30)
+		btnRow.BackgroundTransparency = 1
+		btnRow.LayoutOrder = idx * 10 + 2
+		btnRow.ZIndex = 13
+		btnRow.Parent = container
+
+		local barBg = Instance.new("Frame")
+		barBg.Size = UDim2.new(0.65, -4, 1, 0)
+		barBg.Position = UDim2.new(0, 0, 0, 0)
+		barBg.BackgroundColor3 = Theme.SurfaceHighlight
+		barBg.BorderSizePixel = 0
+		barBg.ZIndex = 14
+		barBg.ClipsDescendants = true
+		barBg.Parent = btnRow
+		do
+			local c = Instance.new("UICorner")
+			c.CornerRadius = UDim.new(0, 6)
+			c.Parent = barBg
+		end
+
+		local barFill = Instance.new("Frame")
+		barFill.Size = UDim2.new(1, 0, 1, 0)
+		barFill.BackgroundColor3 = Theme.Success
+		barFill.BorderSizePixel = 0
+		barFill.ZIndex = 15
+		barFill.Parent = barBg
+		do
+			local c = Instance.new("UICorner")
+			c.CornerRadius = UDim.new(0, 6)
+			c.Parent = barFill
+		end
+
+		local barText = Instance.new("TextLabel")
+		barText.Size = UDim2.new(1, 0, 1, 0)
+		barText.BackgroundTransparency = 1
+		barText.Text = hasId and T("abilityReady") or T("abilityWaitId")
+		barText.TextColor3 = Theme.Text
+		barText.Font = Theme.FontBold
+		barText.TextSize = 12
+		barText.ZIndex = 16
+		barText.Parent = barBg
+
+		local fireBtn = Instance.new("TextButton")
+		fireBtn.Size = UDim2.new(0.65, -4, 1, 0)
+		fireBtn.Position = UDim2.new(0, 0, 0, 0)
+		fireBtn.BackgroundTransparency = 1
+		fireBtn.Text = ""
+		fireBtn.TextColor3 = hasId and Theme.Text or Theme.TextDim
+		fireBtn.Font = Theme.FontBold
+		fireBtn.TextSize = 13
+		fireBtn.BorderSizePixel = 0
+		fireBtn.ZIndex = 17
+		fireBtn.Parent = btnRow
+
+		fireBtn.MouseButton1Click:Connect(function()
+			invokeTowerAbilitySafely(model, capturedKey, capturedCd)
+		end)
+
+		local autoState = {
+			enabled = autoEnabled,
+		}
+		local autoBtn = Instance.new("TextButton")
+		autoBtn.Size = UDim2.new(0.35, -4, 1, 0)
+		autoBtn.Position = UDim2.new(0.65, 4, 0, 0)
+		autoBtn.BackgroundColor3 = autoState.enabled and Theme.Success or Theme.SurfaceHighlight
+		autoBtn.Text = T("abilityAutoLabel") .. (autoState.enabled and " ✓" or "")
+		autoBtn.TextColor3 = autoState.enabled and Theme.TextDark or Theme.TextDim
+		autoBtn.Font = Theme.FontBold
+		autoBtn.TextSize = 13
+		autoBtn.BorderSizePixel = 0
+		autoBtn.ZIndex = 17
+		autoBtn.Parent = btnRow
+		do
+			local c = Instance.new("UICorner")
+			c.CornerRadius = UDim.new(0, 6)
+			c.Parent = autoBtn
+		end
+
+		autoBtn.MouseButton1Click:Connect(function()
+			autoState.enabled = not autoState.enabled
+			autoBtn.BackgroundColor3 = autoState.enabled and Theme.Success or Theme.SurfaceHighlight
+			autoBtn.Text = T("abilityAutoLabel") .. (autoState.enabled and " ✓" or "")
+			autoBtn.TextColor3 = autoState.enabled and Theme.TextDark or Theme.TextDim
+		end)
+
+		if idx < #info.abilityKeys then
+			local sep = Instance.new("Frame")
+			sep.Size = UDim2.new(1, 0, 0, 1)
+			sep.BackgroundColor3 = Theme.Border
+			sep.BackgroundTransparency = 0.5
+			sep.BorderSizePixel = 0
+			sep.LayoutOrder = idx * 10 + 3
+			sep.ZIndex = 13
+			sep.Parent = container
+		end
+
+		table.insert(widgets, {
+			barFill = barFill,
+			barText = barText,
+			fireBtn = fireBtn,
+			autoBtn = autoBtn,
+			autoState = autoState,
+			autoFiredAt = nil,
+			key = capturedKey,
+			cd = capturedCd,
+			abiName = abi.Name,
+			abiLabel = abiLabel,
+		})
+	end
+
+	info.savedAutoStates = nil
+	abiTowerCards[model] = {
+		container = container,
+		widgets = widgets,
+	}
+end
+
+local function removeAbilityCard(model)
+	local card = abiTowerCards[model]
+	if not card then
+		return
+	end
+	if abiLiveTowers[model] then
+		local saved = {}
+		for _, w in ipairs(card.widgets) do
+			saved[w.key] = w.autoState.enabled
+		end
+		abiLiveTowers[model].savedAutoStates = saved
+	end
+	card.container:Destroy()
+	abiTowerCards[model] = nil
+
+	if not next(abiTowerCards) and abiEmptyLabel then
+		abiEmptyLabel.Visible = true
+	end
+end
+
+-- 實作 forward-declared rebuildAllAbilityCards
+rebuildAllAbilityCards = function()
+	for model in pairs(abiTowerCards) do
+		removeAbilityCard(model)
+	end
+	for model in pairs(abiLiveTowers) do
+		buildAbilityCard(model)
+	end
+end
+
+local function abiBindGameId(model, gameId)
+	local info = abiLiveTowers[model]
+	if not info or info.gameId ~= nil then
+		return
+	end
+	info.gameId = gameId
+	abiModelByGameId[gameId] = model
+	if abiGameIdCooldownHint[gameId] then
+		for k, t0 in pairs(abiGameIdCooldownHint[gameId]) do
+			info.cooldowns[k] = t0
+		end
+		abiGameIdCooldownHint[gameId] = nil
+	end
+	if abiTowerCards[model] then
+		removeAbilityCard(model)
+		buildAbilityCard(model)
+	end
+end
+
+-- 空提示標籤
+abiEmptyLabel = Instance.new("TextLabel")
+abiEmptyLabel.Size = UDim2.new(1, -10, 0, 40)
+abiEmptyLabel.BackgroundTransparency = 1
+abiEmptyLabel.Text = T("abilityNoTowers")
+abiEmptyLabel.TextColor3 = Theme.TextDim
+abiEmptyLabel.Font = Theme.Font
+abiEmptyLabel.TextSize = Theme.SizeNormal
+abiEmptyLabel.ZIndex = 12
+abiEmptyLabel.LayoutOrder = 9999
+abiEmptyLabel.Parent = abilityScrollFrame
+
+-- ============================================================
+-- 塔能力回調
+-- ============================================================
+local function onAbilityPlaceTower(towerName, gameId)
+	local bound = false
+	for model, info in pairs(abiLiveTowers) do
+		if info.name == towerName and info.gameId == nil then
+			abiBindGameId(model, gameId)
+			bound = true
+			break
+		end
+	end
+	if not bound then
+		table.insert(abiPendingGameIds, {
+			name = towerName,
+			gameId = gameId,
+			time = tick(),
+		})
+	end
+end
+
+local function onAbilitySellTower(gameId)
+	local model = abiModelByGameId[gameId]
+	if model and abiLiveTowers[model] then
+		removeAbilityCard(model)
+		abiLiveTowers[model] = nil
+		abiModelByGameId[gameId] = nil
+	end
+end
+
+local function onAbilityTowerAbility(gameId, abilityKey)
+	if not abilityFrame.Visible then
+		positionAbilityFrame()
+		abilityFrame.Visible = true
+	end
+	if gameId and abilityKey then
+		local model = abiModelByGameId[gameId]
+		if model and abiLiveTowers[model] then
+			abiLiveTowers[model].cooldowns[abilityKey] = abiGameClock
+		else
+			abiGameIdCooldownHint[gameId] = abiGameIdCooldownHint[gameId] or {}
+			abiGameIdCooldownHint[gameId][abilityKey] = abiGameClock
+		end
+	end
+end
+
+-- ============================================================
+-- 按鈕事件
+-- ============================================================
+copyBtn.MouseButton1Click:Connect(function()
+	local s = generateScript()
+	if s then
+		local ok = pcall(setclipboard, s)
+		if ok then
+			addLog(T("logCopyOk"), Color3.fromRGB(100, 255, 100))
+			copyBtn.Text = T("btnCopied")
+			copyBtn.BackgroundColor3 = Color3.fromRGB(0, 180, 0)
+			task.wait(2)
+			copyBtn.Text = T("btnCopy")
+			copyBtn.BackgroundColor3 = Theme.Success
+		else
+			-- 剪貼簿不可用：改存檔（不輸出到 console）
+			pcall(saveScriptToFile, "copy_fallback", s)
+			addLog(T("logCopyConsole"), Theme.Warning)
+		end
+	end
+end)
+
+saveBtn.MouseButton1Click:Connect(openSavePanel)
+
+confirmSaveBtn.MouseButton1Click:Connect(function()
+	local fileName = fileNameInput.Text:gsub("[^%w_%-]", "_")
+	if fileName == "" or fileName:match("^_+$") then
+		addLog(T("logInvalidName"), Theme.Warning)
+		return
+	end
+	local s = generateScript()
+	if s then
+		local ok = saveScriptToFile(fileName, s)
+		if ok then
+			saveFrame.Visible = false
+		end
+	end
+end)
+
+cancelSaveBtn.MouseButton1Click:Connect(function()
+	saveFrame.Visible = false
+end)
+saveCloseBtn.MouseButton1Click:Connect(function()
+	saveFrame.Visible = false
+end)
+manageCloseBtn.MouseButton1Click:Connect(function()
+	manageFrame.Visible = false
+end)
+closeBtn.MouseButton1Click:Connect(function()
+	parameterFrame.Visible = false
+end)
+abilityCloseBtn.MouseButton1Click:Connect(function()
+	abilityFrame.Visible = false
+end)
+refreshScriptsBtn.MouseButton1Click:Connect(function()
+	refreshScriptList()
+end)
+
+Parameter.MouseButton1Click:Connect(function()
+	if not parameterFrame.Visible then
+		closeBlockingPanels()
+		parameterFrame.Position = UDim2.new(
+			mainFrame.Position.X.Scale,
+			mainFrame.Position.X.Offset + mainFrame.AbsoluteSize.X + 10,
+			mainFrame.Position.Y.Scale,
+			mainFrame.Position.Y.Offset
+		)
+		parameterFrame.Visible = true
+		if abilityFrame.Visible then
+			positionAbilityFrame()
+		end
+	else
+		parameterFrame.Visible = false
+		if abilityFrame.Visible then
+			positionAbilityFrame()
+		end
+	end
+end)
+
+abilityBtn.MouseButton1Click:Connect(function()
+	if not abilityFrame.Visible then
+		closeBlockingPanels()
+		positionAbilityFrame()
+		abilityFrame.Visible = true
+	else
+		abilityFrame.Visible = false
+	end
+end)
+
+resetBtn.MouseButton1Click:Connect(function()
+	nextOrder = 1
+	orderToInfo = {}
+	idToOrder = {}
+	upgradeLog = {}
+	towerObjById = {}     -- 清空塔物件快取（Level 偵測）
+	lastLevelByOrder = {} -- 清空等級基準（Level 偵測）
+	sellLog = {}
+	sellAllLog = {}
+	skipWaveLog = {}
+	buyPlotLog = {}
+	speedChangeLog = {}
+	abilityLog = {}
+	Ext.targetingLog = {}
+	gameSettingLog = {}
+	gameStartAutoSkipWave = false
+	lastDetectedSpeed = 1
+	diffVoteLogged = nil
+	isGameRunning = false
+	gameStartTime = nil
+	gameEndElapsed = nil
+	gameStartMapId = nil
+	mapTransitionLog = {}
+
+	-- 重置能力面板
+	for model in pairs(abiTowerCards) do
+		removeAbilityCard(model)
+	end
+	abiLiveTowers = {}
+	abiModelByGameId = {}
+	abiPendingGameIds = {}
+	abiGameIdCooldownHint = {}
+	abiRemoteInFlight = {}
+	abiNextOrder = 1
+	abiCardOrder = 0
+	if abiEmptyLabel then
+		abiEmptyLabel.Visible = true
+	end
+
+	-- 花園塔防：重置時用 workspace 屬性重新同步地圖（NTD 的 ReplicatedStorage.Values 在 GTD 不存在，
+	-- 舊碼的 WaitForChild("Values",3) 每次重置都會白等 3 秒 timeout）。難度由 InitTracker 的
+	-- Difficulty 屬性監聽持續維護，重置不需重讀。
+	pcall(function()
+		gameSettings.mapId = Ext.WA("MapId") or gameSettings.mapId or "Unknown"
+		gameSettings.night = Ext.WA("Night") == true
+		gameSettings.turkey = Ext.WA("Turkey") == true
+		if gameSettings.turkey then
+			gameSettings.modifier = "Turkey"
+		elseif gameSettings.night then
+			gameSettings.modifier = "Night"
+		else
+			gameSettings.modifier = "None"
+		end
+	end)
+
+	for _, child in pairs(scrollFrame:GetChildren()) do
+		child:Destroy()
+	end
+	listLayout:Destroy()
+	listLayout = Instance.new("UIListLayout")
+	listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	listLayout.Padding = UDim.new(0, 8)
+	listLayout.Parent = scrollFrame
+	listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+		scrollFrame.CanvasSize = UDim2.new(0, 0, 0, listLayout.AbsoluteContentSize.Y + 10)
+	end)
+	logOrder = 1
+
+	updateInfoLabel()
+	addLog(T("logReset"), Color3.fromRGB(100, 200, 255))
+end)
+
+debugBtn.MouseButton1Click:Connect(function()
+	addLog(T("logTowerListHdr"), Color3.fromRGB(100, 200, 255))
+	if nextOrder <= 1 then
+		addLog(T("logNoRecord"), Theme.TextDim)
+	else
+		for order = 1, nextOrder - 1 do
+			local info = orderToInfo[order]
+			if info then
+				addLog(
+					T("logTowerItem"):format(
+						info.order,
+						info.UnitType .. getMutLabel(info.UUID),
+						tostring(info.GameID),
+						info.Elapsed or 0
+					),
+					Color3.fromRGB(200, 200, 200)
+				)
+			end
+		end
+	end
+end)
+
+-- F8 切換顯示
+UserInputService.InputBegan:Connect(function(input, gp)
+	if input.KeyCode == Enum.KeyCode.F8 and not gp then
+		uiVisible = not uiVisible
+		mainFrame.Visible = uiVisible
+		if not uiVisible then
+			closeAllPanels()
+		end
+	end
+end)
+
+-- ============================================================
+-- 花園塔防專用 helper（自舊版移植）
+-- ============================================================
+-- 取得模型樞紐世界座標（放置後比對 Entities 用）
+local function getModelPivotPosition(model)
+	if typeof(model) ~= "Instance" then return nil end
+	local ok, pivot = pcall(function() return model.WorldPivot end)
+	if ok and pivot then return pivot.Position end
+	ok, pivot = pcall(function() return model:GetPivot() end)
+	if ok and pivot then return pivot.Position end
+	if model:IsA("Model") and model.PrimaryPart then return model.PrimaryPart.Position end
+	return nil
+end
+
+-- 兩座標是否接近（綁定放置塔 id 用）
+local function positionsClose(a, b, tolerance)
+	if not a or not b then return false end
+	tolerance = tolerance or 0.5
+	return (a - b).Magnitude <= tolerance
+end
+
+-- 遊戲速度：讀 workspace 屬性 TickSpeed（比舊版抓 UI 顏色穩；回傳數字 1/2/3）
+local function detectGameSpeedNum()
+	local v = Ext.WA("TickSpeed")
+	if type(v) == "number" and v > 0 then return v end
+	return 1
+end
+
+-- 難度正規化：dif_easy → Easy
+local difficultyMap = {
+	dif_easy = "Easy", dif_normal = "Normal", dif_hard = "Hard",
+	dif_insane = "Insane", dif_impossible = "Impossible", dif_apocalypse = "Apocalypse",
+}
+local function normalizeDifficulty(difId)
+	if type(difId) ~= "string" then return "Unknown" end
+	return difficultyMap[difId] or difId
+end
+
+-- 單次掃描 workspace.Map.Entities，找位置吻合且非 enemy_ 的未綁定 entity，讀其 ID attribute。
+-- 回傳 gameId（數字）或 nil。
+-- MovesAround 單位（如 unit_soulshard）會被遊戲包一層同名空 Model：ID 在內層同名實體，
+-- 內層會自己移動；原放置點留在同包裝內的 MovingSpawnVisual。故 ID 外層讀不到時往內層找。
+function Ext.getEntityId(child)
+	local idVal = child:GetAttribute("ID")
+	if type(idVal) == "number" then
+		return idVal
+	end
+	local inner = child:FindFirstChild(child.Name)
+	idVal = inner and inner:GetAttribute("ID")
+	return type(idVal) == "number" and idVal or nil
+end
+
+-- 放置點座標：有 MovingSpawnVisual 的包裝以它為準（實體本身已跟著玩家/瞬移）
+function Ext.getEntityHomePosition(child)
+	local visual = child:FindFirstChild("MovingSpawnVisual")
+	return getModelPivotPosition(visual or child)
+end
+
+local function findUnboundEntityAt(targetPos, unitName)
+	EntitiesFolder = Ext.GetEntities(0) or EntitiesFolder -- 重開後 Context 換新，快取會過期
+	if not EntitiesFolder then return nil end
+	for _, child in ipairs(EntitiesFolder:GetChildren()) do
+		if not child.Name:match("^enemy_") and (not unitName or child.Name == unitName) then
+			local idVal = Ext.getEntityId(child)
+			if idVal and not idToOrder[idVal] then
+				local childPos = Ext.getEntityHomePosition(child)
+				if childPos and positionsClose(childPos, targetPos, 0.6) then
+					return idVal, child
+				end
+			end
+		end
+	end
+	return nil
+end
+
+-- 待綁定放置佇列：__namecall hook 由「遊戲」呼叫時跑在受限能力執行緒（缺少 Plugin 權限），
+-- 不能建立 UI 實體（Instance）；故 hook 只將資料放入佇列，實際綁定與日誌輸出移至 Heartbeat（具備完整權限）處理。
+local pendingPlacements = {}
+
+-- 每幀處理待綁定放置（在 Heartbeat 內呼叫 → elevated capability，可操作 Instance）。
+local function processPendingPlacements()
+	if #pendingPlacements == 0 then return end
+	local now = os.clock()
+	for i = #pendingPlacements, 1, -1 do
+		local job = pendingPlacements[i]
+		local gameId = findUnboundEntityAt(job.targetPos, job.unitName)
+		if gameId then
+			table.remove(pendingPlacements, i)
+			local elapsed = job.elapsed or getElapsed()
+			local info = {
+				order = nextOrder,
+				name = job.unitName,
+				id = gameId,
+				position = job.targetPos,
+				Index = nextOrder,
+				UnitType = job.unitName,
+				DisplayName = job.unitName,
+				Position = job.targetPos,
+				GameID = gameId,
+				Rotation = job.rotation or 0,
+				CF = job.placeCF,
+				PathIndex = job.pathIndex,
+				DistanceAlongPath = job.distanceAlongPath,
+				Elapsed = elapsed,
+				OriginPos = Ext.GetOrigin(),
+				cost = 0,
+			}
+			if job.placeAction then
+				job.placeAction.callback = function(cost)
+					info.cost = cost
+				end
+				if job.placeAction.cost then
+					info.cost = job.placeAction.cost
+				end
+			end
+			orderToInfo[nextOrder] = info
+			idToOrder[gameId] = nextOrder
+			lastLevelByOrder[nextOrder] = 1 -- 放置即 1 級；之後由 Level 監看器偵測升級
+			-- 成本版：日誌以牌價($)顯示（與生成腳本的金錢閘門一致）；查不到牌價才退回時間顯示
+			local placePrice = ScriptSettings.CostMode and getUnitCost(job.unitName, 1) or nil
+			local placeLogText
+			if placePrice then
+				placeLogText = T("logPlaceTowerCost"):format(nextOrder, job.unitName, math.floor(placePrice + 0.5))
+			else
+				placeLogText = T("logPlaceTower"):format(nextOrder, job.unitName, elapsed)
+			end
+			addLog(placeLogText, Color3.fromRGB(100, 255, 100))
+			nextOrder += 1
+			pcall(onAbilityPlaceTower, job.unitName, gameId)
+		elseif now >= job.deadline then
+			table.remove(pendingPlacements, i)
+			if job.placeAction then
+				CostTracker.CancelAction(job.placeAction)
+			end
+			addLog(T("logPlaceFailed"):format(job.unitName), Theme.Warning)
+		end
+	end
+end
+
+-- ============================================================
+-- 升級偵測 — 監看 client 塔物件的 .Level 增量（統一手動+自動升級）
+-- 塔的 client 實體物件帶 ID(=gameId)/Level/IsAutoUpgrading/Owner。無 gameId→物件的純表管理器，
+-- 故用 getgc 一次性掃描建快取，之後只輪詢快取物件的 .Level（純表讀取，零 getgc、不卡頓）。
+-- 優先用 filtergc 由執行器端依鍵過濾（只回傳少量候選表，不產生全量快照）；
+-- 缺 filtergc 才退回 getgc(true)，且一律「同步掃完 + 立刻 table.clear」，絕不持有快照跨 yield：
+-- getgc(true) 會把尚未清掃的垃圾（含上一份快照）重新放進新陣列使其復活，
+-- 若邊掃邊 task.wait() 跨過 GC 週期，舊快照與其內容就永遠回收不掉，每 3s 一份會滾雪球到數十 GB。
+-- ============================================================
+local levelWatchActive = false
+local lastLevelScanClock = 0
+local TOWER_KEYS = { "ID", "Level", "IsAutoUpgrading", "Owner" }
+local hasFilterGc = type(filtergc) == "function"
+-- getgc 備援是同步全掃（會短暫卡頓），冷卻拉長；filtergc 很便宜維持 3s
+local LEVEL_SCAN_COOLDOWN = hasFilterGc and 3 or 15
+
+-- 安全掃描：只為 neededIds（gameId 集合）找對應塔物件並寫入 towerObjById，湊齊即停。
+local function collectTowerObjects(neededIds)
+	local remaining = 0
+	for _ in pairs(neededIds) do
+		remaining += 1
+	end
+	if remaining == 0 then
+		return
+	end
+	local lp = Players.LocalPlayer
+
+	-- 用 Level/IsAutoUpgrading/Owner 精確認定為「我方塔物件」
+	local function tryMatch(v)
+		local id = rawget(v, "ID")
+		if id ~= nil and neededIds[id]
+			and type(rawget(v, "Level")) == "number"
+			and rawget(v, "IsAutoUpgrading") ~= nil
+			and rawget(v, "Owner") == lp then
+			towerObjById[id] = v
+			neededIds[id] = nil
+			remaining -= 1
+		end
+		return remaining <= 0
+	end
+
+	if hasFilterGc then
+		local ok, list = pcall(filtergc, "table", { Keys = TOWER_KEYS }, false)
+		if ok and type(list) == "table" then
+			for _, v in ipairs(list) do
+				if tryMatch(v) then
+					break
+				end
+			end
+			table.clear(list)
+			return
+		end
+	end
+
+	pcall(function()
+		local gc = getgc(true)
+		for i = 1, #gc do
+			local v = gc[i]
+			if type(v) == "table" and tryMatch(v) then
+				break
+			end
+		end
+		table.clear(gc) -- 立刻斷開快照對所有物件的引用，讓被復活的垃圾能在下輪 GC 回收
+	end)
+end
+
+-- 附魔（RollableTrait）：塔物件帶 RollableTraitId / RollableTraitModifiers，其中
+-- UpgradeCostMultiplier（如 tr_thrifty_1 = 0.95）會讓實付升級價 = round(牌價 × 倍率)
+-- （遊戲 GetUpgradeCost）。取得塔物件時順手記到 orderToInfo，供生成腳本時修正牌價。
+local function readTowerTrait(order, obj)
+	local info = orderToInfo[order]
+	if not info or info.traitRead then
+		return
+	end
+	local mods = rawget(obj, "RollableTraitModifiers")
+	info.traitId = rawget(obj, "RollableTraitId")
+	info.upgradeCostMult = (type(mods) == "table" and type(mods.UpgradeCostMultiplier) == "number") and mods.UpgradeCostMultiplier or 1
+	info.traitRead = true
+end
+
+-- 背景監看器：補抓缺物件的塔（getgc，有冷卻）+ 偵測 .Level 增量 → 補普通升級 op。
+-- 由 InitTracker 的 task.defer（elevated）啟動，故本執行緒可碰 UI（addLog）。
+local function StartLevelWatcher()
+	if levelWatchActive then
+		return
+	end
+	levelWatchActive = true
+	task.spawn(function()
+		while true do
+			task.wait(0.5)
+			if isGameRunning then
+				-- 目前在場的我方塔 id（便宜：Entities 子物件數量少）
+				local presentIds = {}
+				local Entities = Ext.GetEntities(0) or EntitiesFolder
+				if not (Entities and Entities.Parent) then
+					Entities = Ext.GetEntities(0)
+				end
+				if Entities then
+					for _, child in ipairs(Entities:GetChildren()) do
+						if not child.Name:match("^enemy_") then
+							local idVal = Ext.getEntityId(child)
+							if idVal then
+								presentIds[idVal] = true
+							end
+						end
+					end
+				end
+
+				-- 補抓缺物件的塔（只抓「已追蹤 ∧ 在場 ∧ 尚無快取」者；有冷卻防連續重掃）
+				local needed, missing = {}, 0
+				for gameId in pairs(idToOrder) do
+					if presentIds[gameId] and not towerObjById[gameId] then
+						needed[gameId] = true
+						missing += 1
+					end
+				end
+				if missing > 0 and (os.clock() - lastLevelScanClock) >= LEVEL_SCAN_COOLDOWN then
+					lastLevelScanClock = os.clock()
+					collectTowerObjects(needed)
+				end
+
+				-- 偵測等級增量 → 每升一級補一筆普通 upgrade（成本由生成時的牌價表覆寫，故記 0）
+				for gameId, order in pairs(idToOrder) do
+					if presentIds[gameId] then
+						local obj = towerObjById[gameId]
+						if obj then
+							readTowerTrait(order, obj)
+							local lvl = rawget(obj, "Level")
+							if type(lvl) == "number" then
+								local last = lastLevelByOrder[order] or 1
+								if lvl > last then
+									local k = lvl - last
+									lastLevelByOrder[order] = lvl
+									local elapsed = getElapsed()
+									-- 防呆：升級時間不得早於該塔放置時間。遊戲結束瞬間 gameStartTime 被清 nil →
+									-- getElapsed()=0，會把末段塔的升級記成 elapsed≈0 → 排序排到放置前 → 重播跳過。
+									local pInfo = orderToInfo[order]
+									if pInfo and pInfo.Elapsed and elapsed < pInfo.Elapsed then
+										elapsed = pInfo.Elapsed
+									end
+									for _ = 1, k do
+										table.insert(upgradeLog, {
+											gameId = gameId,
+											order = order,
+											elapsed = elapsed,
+											cost = 0,
+										})
+									end
+									local info = orderToInfo[order]
+									if info then
+										local upPrice = ScriptSettings.CostMode
+											and Ext.getUpgradeCostSum(info.UnitType, last, lvl, info.upgradeCostMult)
+											or nil
+										local upText
+										if upPrice then
+											upText = T("logUpgradeLvlCost"):format(order, info.UnitType or "?", lvl, k, upPrice)
+										else
+											upText = T("logUpgradeLvl"):format(order, info.UnitType or "?", lvl, k, elapsed)
+										end
+										addLog(upText, Color3.fromRGB(255, 255, 100))
+									end
+								end
+							end
+						end
+					end
+				end
+			end
+		end
+	end)
+end
+
+-- ============================================================
+-- 初始化追蹤系統
+-- ============================================================
+local function InitTracker()
+	Ext.log("info", "[GTD Tracker] Initializing...")
+	local ok, err = pcall(function()
+		-- 花園塔防：remote 全在 ReplicatedStorage.RemoteFunctions（扁平，皆 InvokeServer）
+		local RF = ReplicatedStorage:WaitForChild("RemoteFunctions", 10)
+		PlaceTowerRemote = RF:WaitForChild("PlaceUnit", 10)
+		SellTowerRemote = RF:WaitForChild("SellUnit", 10)
+		SkipWaveRemote = RF:WaitForChild("SkipWave", 10)
+		GamemodeRemote = RF:WaitForChild("PlaceDifficultyVote", 10) -- 難度投票
+		TowerAbilityRemote = RF:FindFirstChild("ActivateUnitAbility")
+		SellAllRemote = RF:FindFirstChild("SellAll") -- 一鍵清場（無參數）
+		local RE = ReplicatedStorage:FindFirstChild("RemoteEvents")
+		BuyPlotRemote = RE and RE:FindFirstChild("BuyPlot") -- 活動地塊（非活動地圖可能無）
+		-- 變速已改成 RemoteEvent（FireServer(speed)），舊的 RemoteFunctions.ChangeTickSpeed 已移除
+		GameSpeedRemote = RE and RE:FindFirstChild("ChangeTickSpeed")
+		Ext.TargetingRemote = RE and RE:FindFirstChild("Entity_ChangeTargetingMode")
+		Ext.AutoSkipRemote = RE and RE:FindFirstChild("SetAutoSkip")
+
+		-- 放置塔容器（升級/賣出 gameId 來源）
+		EntitiesFolder = Ext.GetEntities(10)
+
+		-- 遊戲資訊：讀 workspace 屬性
+		gameSettings.mapId = Ext.WA("MapId") or "Unknown"
+		gameSettings.difficulty = normalizeDifficulty(Ext.WA("Difficulty"))
+		gameSettings.difficultyId = Ext.WA("Difficulty") -- 原始 id（dif_insane），重播投票用
+		gameSettings.night = Ext.WA("Night") == true -- 夜間（活動）模式，重播 SelectMap 第 3 參數
+		gameSettings.turkey = Ext.WA("Turkey") == true -- 火雞（活動）模式，重播 SelectMap 第 3 參數
+		if gameSettings.turkey then
+			gameSettings.modifier = "Turkey"
+		elseif gameSettings.night then
+			gameSettings.modifier = "Night"
+		else
+			gameSettings.modifier = "None"
+		end
+		lastDetectedSpeed = detectGameSpeedNum()
+
+		local function refreshMode()
+			gameSettings.night = Ext.WA("Night") == true
+			gameSettings.turkey = Ext.WA("Turkey") == true
+			if gameSettings.turkey then
+				gameSettings.modifier = "Turkey"
+			elseif gameSettings.night then
+				gameSettings.modifier = "Night"
+			else
+				gameSettings.modifier = "None"
+			end
+			updateInfoLabel()
+		end
+
+		Ext.WAChanged("Turkey"):Connect(refreshMode)
+		Ext.WAChanged("Night"):Connect(refreshMode)
+
+		-- 地圖切換監聽（雙圖流程）
+		Ext.WAChanged("MapId"):Connect(function()
+			local newMap = Ext.WA("MapId") or "Unknown"
+			if isGameRunning and newMap ~= gameSettings.mapId then
+				local elapsed = getElapsed()
+				table.insert(mapTransitionLog, {
+					fromMap = gameSettings.mapId,
+					toMap = newMap,
+					elapsed = elapsed,
+				})
+				addLog(
+					string.format("🗺️ Map: %s → %s  +%.1fs", gameSettings.mapId, newMap, elapsed),
+					Color3.fromRGB(255, 200, 80)
+				)
+			end
+			gameSettings.mapId = newMap
+			updateInfoLabel()
+		end)
+
+		-- 難度變化（PlaceDifficultyVote hook 也會設；這裡監聽屬性保險）
+		Ext.WAChanged("Difficulty"):Connect(function()
+			local raw = Ext.WA("Difficulty")
+			local d = normalizeDifficulty(raw)
+			if gameSettings.difficulty ~= d then
+				gameSettings.difficulty = d
+				gameSettings.difficultyId = raw
+				updateInfoLabel()
+			end
+		end)
+
+		-- AutoSkip：UI 文字偵測 + 定期輪詢記錄變化
+		autoSkipState.on = readAutoSkipWave()
+		pcall(updateInfoLabel)
+		task.spawn(function()
+			-- 輪詢只比對「UI 文字自己的變化」（lastUiOn）；遠程攔截（FireServer.AutoSkip）已先記過的值
+			-- （autoSkipState.on 已等於 on）不重複記，也避免 UI 文字比遠程晚更新時誤記一筆相反的值。
+			local lastUiOn = autoSkipState.on
+			while true do
+				task.wait(0.5)
+				local on = readAutoSkipWave()
+				if on ~= lastUiOn then
+					lastUiOn = on
+					pcall(updateInfoLabel)
+					-- UI 這一輪才變、且遠程攔截還沒記過這個值（autoSkipState.on 不同）→ 補記
+					if on ~= autoSkipState.on then
+						autoSkipState.on = on
+						if isGameRunning then
+							local elapsed = getElapsed()
+							table.insert(gameSettingLog, {
+								name = "AutoSkipWave",
+								value = on,
+								elapsed = elapsed,
+							})
+							addLog(
+								T("logGameSetting"):format("AutoSkipWave", tostring(on), elapsed),
+								Color3.fromRGB(200, 150, 255)
+							)
+						end
+					end
+				end
+			end
+		end)
+
+		-- === Namecall Handlers ===
+		local NamecallHandlers = {}
+		NamecallHandlers.InvokeServer = {}
+		NamecallHandlers.FireServer = {}
+
+		-- 花園塔防：PlaceUnit(unitId, {CF,Rotation,Valid,Position[,PathIndex,DistanceAlongPath]})。
+		-- 不回傳可用 id；且 hook 跑在受限能力執行緒（不能碰 UI / 不宜阻塞）。
+		-- 這裡只 push 純表工作到 pendingPlacements，綁定+UI 交給 Heartbeat 的 processPendingPlacements（elevated）。
+		NamecallHandlers.InvokeServer.PlaceTower = function(_, args, result, placeAction)
+			local unitName = args[1]
+			local placeParams = args[2]
+			if type(unitName) ~= "string" or type(placeParams) ~= "table" then
+				if placeAction then CostTracker.CancelAction(placeAction) end
+				return result
+			end
+			local targetPos = placeParams.Position or (placeParams.CF and placeParams.CF.Position)
+			if not isGameRunning or not targetPos then
+				if placeAction then CostTracker.CancelAction(placeAction) end
+				return result
+			end
+			table.insert(pendingPlacements, {
+				unitName = unitName,
+				targetPos = targetPos,
+				rotation = placeParams.Rotation or 0,
+				pathIndex = placeParams.PathIndex,
+				distanceAlongPath = placeParams.DistanceAlongPath,
+				placeCF = placeParams.CF,
+				placeAction = placeAction,
+				elapsed = getElapsed(),
+				deadline = os.clock() + 5,
+			})
+			return result
+		end
+
+		-- 註：升級不再用 UpgradeUnit hook 記錄；改由 StartLevelWatcher 監看每塔 .Level 增量
+		-- 統一捕捉手動+自動升級（自動升級為伺服器端執行、不發 UpgradeUnit）。
+
+		NamecallHandlers.InvokeServer.SellTower = function(_, args, result)
+			local towerId = tonumber(args[1])
+			local idStr = args[1]
+
+			queueHookTask(function()
+				-- 花園塔防 SellUnit 回傳值未確認，比照舊版無條件記錄
+				if not isGameRunning then
+					return
+				end
+
+				local order = towerId and idToOrder[towerId]
+				local info = order and orderToInfo[order]
+				local elapsed = getElapsed()
+
+				table.insert(sellLog, {
+					gameId = towerId,
+					order = order,
+					elapsed = elapsed,
+				})
+
+				pcall(onAbilitySellTower, towerId)
+
+				if info then
+					addLog(T("logSell"):format(info.order, info.UnitType, elapsed), Color3.fromRGB(255, 100, 100))
+				else
+					addLog(T("logSellUnknown"):format(idStr, elapsed), Color3.fromRGB(255, 100, 100))
+				end
+			end)
+
+			return result
+		end
+
+		-- 花園塔防：SellAll() 一鍵清除場上所有塔（InvokeServer 無參數）。
+		-- ⚠️⚠️ 此 handler「絕對禁止做任何 instance namecall」(GetChildren/FindFirstChild/WaitForChild…)！
+		-- dispatch 是「記完不 return，落到底部 return oldNamecall(self,...) 原生轉發」。Potassium 在 hook 內
+		-- 做 namecall 會改掉「當前 namecall method」且不還原 → oldNamecall 把 SellAll:InvokeServer() 變成
+		-- SellAll:FindFirstChild() → "Argument 1 missing or nil"、清場根本沒執行（連遊戲自己的按鈕都被弄壞）。
+		-- 已用 remote-spy 實證。因此只做純 Lua 記錄；要 namecall 才能拿的「清場前塔數」一律不取。
+		NamecallHandlers.InvokeServer.SellAll = function()
+			if not isGameRunning then
+				return
+			end
+			local elapsed = getElapsed() -- tick() 為一般函式呼叫、非 namecall，安全
+			table.insert(sellAllLog, { elapsed = elapsed })
+			queueHookTask(function()
+				addLog(T("logSellAll"):format(elapsed), Color3.fromRGB(255, 80, 80))
+			end)
+		end
+
+		NamecallHandlers.InvokeServer.TowerAbility = function(_, args, result)
+			local towerId = tonumber(args[1])
+			local idStr = args[1]
+
+			queueHookTask(function()
+				if not isGameRunning then
+					return
+				end
+
+				local order = towerId and idToOrder[towerId]
+				local info = order and orderToInfo[order]
+				local elapsed = getElapsed()
+
+				-- 花園塔防 ActivateUnitAbility 只送 gameId（無能力名，見 remote-spy）；
+				-- 能力名/能力鍵一律由該塔 unit_id 反查（一塔一能力）。abilityKey 用 unit_id
+				-- 才與 towersWithAbility / 面板 widget 的 key 一致 → 冷卻提示能正確綁到卡片。
+				local unitId = info and info.UnitType
+				local abiData = unitId and ensureAbilityData(unitId) -- 未知塔惰性補資料，名稱才不會退回 unit_id
+				local abilityKey = unitId
+				local abilityName = (abiData and T(abiData.Name)) or (unitId and T(unitId)) or "Unknown"
+
+				table.insert(abilityLog, {
+					gameId = towerId,
+					order = order,
+					abilityKey = abilityKey,
+					abilityName = abilityName,
+					elapsed = elapsed,
+				})
+
+				pcall(onAbilityTowerAbility, towerId, abilityKey)
+
+				if info then
+					addLog(
+						T("logAbility"):format(info.order, info.UnitType, abilityName, elapsed),
+						Color3.fromRGB(180, 100, 255)
+					)
+				else
+					addLog(T("logAbilityUnknown"):format(idStr, abilityName, elapsed), Color3.fromRGB(180, 100, 255))
+				end
+			end)
+
+			return result
+		end
+
+		-- 花園塔防：SkipWave / ChangeTickSpeed / PlaceDifficultyVote 皆 RemoteFunction(InvokeServer)
+		NamecallHandlers.InvokeServer.SkipWave = function(_, _, result)
+			if readAutoSkipWave() then
+				return result
+			end
+
+			if isGameRunning then
+				local elapsed = getElapsed()
+				table.insert(skipWaveLog, {
+					elapsed = elapsed,
+				})
+
+				queueHookTask(function()
+					addLog(T("logSkipWave"):format(elapsed), Color3.fromRGB(150, 150, 255))
+				end)
+			end
+
+			return result
+		end
+
+		-- 變速：RemoteEvents.ChangeTickSpeed:FireServer(speed)。hook 內只做純 Lua 記錄（同 BuyPlot），result 為 nil。
+		NamecallHandlers.FireServer.GameSpeed = function(_, args, result)
+			local speed = tonumber(args[1]) or 1
+
+			if isGameRunning and speed ~= lastDetectedSpeed then
+				lastDetectedSpeed = speed
+				local elapsed = getElapsed()
+
+				table.insert(speedChangeLog, {
+					speed = speed,
+					elapsed = elapsed,
+				})
+
+				queueHookTask(function()
+					addLog(T("logSpeedSet"):format(speed, elapsed), Color3.fromRGB(255, 200, 150))
+				end)
+			end
+
+			return result
+		end
+
+		-- Auto Skip：SetAutoSkip:FireServer(bool)。直接用遠端參數記錄（比輪詢 UI 文字準，時間也是送出當下）；
+		-- 同步 autoSkipState.on，輪詢偵測到 UI 變化時就不會重複記一筆。純 Lua，log 交給 queueHookTask。
+		NamecallHandlers.FireServer.AutoSkip = function(args)
+			local on = args[1] == true
+			if not isGameRunning or autoSkipState.on == on then
+				return
+			end
+			autoSkipState.on = on
+			local elapsed = getElapsed()
+			table.insert(gameSettingLog, { name = "AutoSkipWave", value = on, elapsed = elapsed })
+			queueHookTask(function()
+				pcall(updateInfoLabel)
+				addLog(T("logGameSetting"):format("AutoSkipWave", tostring(on), elapsed), Color3.fromRGB(200, 150, 255))
+			end)
+		end
+
+		-- 塔策略：Entity_ChangeTargetingMode:FireServer(gameId, mode)。hook 內只做純 Lua 記錄
+		-- （idToOrder 查表、getElapsed 皆純 Lua）；addLog 交給 queueHookTask（hook 外、elevated）。
+		-- 同一塔連續改到相同模式（或伺服器端自動同步子單位時的重複送出）不重複記。
+		NamecallHandlers.FireServer.Targeting = function(args)
+			local gameId = tonumber(args[1])
+			local mode = tonumber(args[2])
+			if not gameId or not mode or not isGameRunning then
+				return
+			end
+			local order = idToOrder[gameId]
+			local last = Ext.targetingLog[#Ext.targetingLog]
+			local elapsed = getElapsed()
+			if last and last.gameId == gameId and last.mode == mode and elapsed - (last.elapsed or 0) < 0.2 then
+				return
+			end
+			table.insert(Ext.targetingLog, { gameId = gameId, order = order, mode = mode, elapsed = elapsed })
+			queueHookTask(function()
+				local info = order and orderToInfo[order]
+				if info then
+					addLog(T("logTargeting"):format(info.order, info.UnitType, Ext.targetingModeName(mode), elapsed), Color3.fromRGB(120, 220, 255))
+				else
+					addLog(T("logTargetingUnknown"):format(tostring(gameId), Ext.targetingModeName(mode), elapsed), Color3.fromRGB(120, 220, 255))
+				end
+			end)
+		end
+
+		NamecallHandlers.InvokeServer.Difficulty = function(_, args, result)
+			-- 1.76.0：官方呼叫是 (關卡 Context, 難度 id)，舊版是 (難度 id)；取第一個字串參數
+			local difRaw = type(args[1]) == "string" and args[1] or (type(args[2]) == "string" and args[2] or nil)
+			if difRaw == nil then
+				return result
+			end
+			local difficulty = normalizeDifficulty(difRaw)
+			gameSettings.difficulty = difficulty
+			gameSettings.difficultyId = difRaw -- 原始 id（dif_*），重播投票用
+			queueHookTask(function()
+				-- 同一局重複的投票（API 開局重試）只記第一次；難度改了才再記
+				if diffVoteLogged ~= difficulty then
+					diffVoteLogged = difficulty
+					addLog(T("logDiffStart"):format(difficulty), Color3.fromRGB(150, 200, 255))
+				end
+				updateInfoLabel()
+			end)
+			return result
+		end
+
+		-- 活動地塊：BuyPlot:FireServer(plotId)。hook 內只做純 Lua（同 SellAll 的 namecall 禁令，
+		-- GetAttribute 也是 namecall）；讀價格/確認解鎖交給 queueHookTask（hook 外、elevated）。
+		-- 伺服器可能拒絕（沒拿鐮刀/太遠/錢不夠/不相鄰）→ 等 PlotUnlocked 變 true 才記錄。
+		NamecallHandlers.FireServer.BuyPlot = function(args)
+			local plotId = args[1]
+			if type(plotId) ~= "number" or not isGameRunning then
+				return
+			end
+			local elapsed = getElapsed()
+			queueHookTask(function()
+				local map = Ext.GetMapFolder()
+				local folder = map and map:FindFirstChild("CornPlots", true)
+				local model = nil
+				for _, child in ipairs(folder and folder:GetChildren() or {}) do
+					if child:GetAttribute("ModuleId") == plotId then
+						model = child
+						break
+					end
+				end
+				if not model or model:GetAttribute("PlotUnlocked") == true then
+					return
+				end
+				-- 伺服器確認前先讀價格（解鎖後 updatePrices 會把所有地塊漲到下一塊的價）
+				local price = model:GetAttribute("PlotPrice") or 0
+				task.spawn(function()
+					local deadline = os.clock() + 3
+					while model:GetAttribute("PlotUnlocked") ~= true and os.clock() < deadline do
+						task.wait(0.05)
+					end
+					if model:GetAttribute("PlotUnlocked") ~= true or not isGameRunning then
+						return
+					end
+					table.insert(buyPlotLog, { plotId = plotId, price = price, elapsed = elapsed })
+					addLog(T("logBuyPlot"):format(plotId, price, elapsed), Color3.fromRGB(255, 220, 80))
+				end)
+			end)
+		end
+
+		-- 註：自動升級（ToggleAutoUpgrade）不再單獨記錄為 op；其升級效果由 StartLevelWatcher
+		-- 監看 .Level 增量收成普通 upgrade，重播時即為一連串 GTD.AddUpgradeTower。
+
+		-- Hook
+		-- 花園塔防遊戲端是 pcall(RemoteFunction.InvokeServer, RemoteFunction, ...)（SharedHelper.InvokeRemoteFunction），
+		-- 屬「函式呼叫」而非 `:` namecall，__namecall hook 攔不到 → 另外 hookfunction(InvokeServer) 兩條路都掛，
+		-- 共用同一個 dispatch；inDispatch 防止兩條路徑重入造成重複記錄。
+		local oldNamecall
+		local oldInvoke
+		local inDispatch = {}
+		local function dispatchInner(oldNamecall, self, ...)
+			do
+				if self == PlaceTowerRemote then
+					local placeAction
+					if ScriptSettings.CostMode then
+						placeAction = CostTracker.PushAction(nil)
+					end
+					local res = table.pack(oldNamecall(self, ...))
+					local args = { ... }
+					NamecallHandlers.InvokeServer.PlaceTower(self, args, res[1], placeAction)
+					return table.unpack(res, 1, res.n)
+				elseif self == SellTowerRemote then
+					local res = table.pack(oldNamecall(self, ...))
+					local args = { ... }
+					NamecallHandlers.InvokeServer.SellTower(self, args, res[1])
+					return table.unpack(res, 1, res.n)
+				elseif TowerAbilityRemote and self == TowerAbilityRemote then
+					local res = table.pack(oldNamecall(self, ...))
+					local args = { ... }
+					NamecallHandlers.InvokeServer.TowerAbility(self, args, res[1])
+					return table.unpack(res, 1, res.n)
+				elseif SellAllRemote and self == SellAllRemote then
+					-- ⚠️ handler 只做純 Lua 記錄（嚴禁 namecall，原因見其定義）；pcall 包住絕不影響原呼叫。
+					-- 記完「不 return」，落到底部 return oldNamecall(self, ...) 原生轉發（無參數、清場照常執行）。
+					pcall(NamecallHandlers.InvokeServer.SellAll)
+				elseif self == SkipWaveRemote then
+					local res = table.pack(oldNamecall(self, ...))
+					local args = { ... }
+					NamecallHandlers.InvokeServer.SkipWave(self, args, res[1])
+					return table.unpack(res, 1, res.n)
+				elseif self == GamemodeRemote then
+					local res = table.pack(oldNamecall(self, ...))
+					local args = { ... }
+					NamecallHandlers.InvokeServer.Difficulty(self, args, res[1])
+					return table.unpack(res, 1, res.n)
+				end
+			end
+
+			return oldNamecall(self, ...)
+		end
+
+		local function dispatch(old, self, ...)
+			-- InvokeServer 會 yield，旗標必須「每執行緒」記錄，否則等待期間其他呼叫會被漏記
+			local thread = coroutine.running()
+			if inDispatch[thread] then
+				return old(self, ...)
+			end
+			inDispatch[thread] = true
+			local res = table.pack(pcall(dispatchInner, old, self, ...))
+			inDispatch[thread] = nil
+			if not res[1] then
+				error(res[2], 0)
+			end
+			return table.unpack(res, 2, res.n)
+		end
+
+		local hookFunc = function(self, ...)
+			local method = getnamecallmethod()
+			if method == "InvokeServer" or method == "invokeserver" then
+				return dispatch(oldNamecall, self, ...)
+			end
+			-- FireServer 只攔 BuyPlot / 變速 / 塔策略（純 Lua 記錄、不 yield），其餘直接轉發
+			if method == "FireServer" or method == "fireServer" then
+				if BuyPlotRemote and self == BuyPlotRemote then
+					pcall(NamecallHandlers.FireServer.BuyPlot, { ... })
+				elseif GameSpeedRemote and self == GameSpeedRemote then
+					pcall(NamecallHandlers.FireServer.GameSpeed, self, { ... }, nil)
+				else
+					-- Entity_* 遠程由伺服器隨單位動態建立（開局初始化時可能還不存在），不能靠初始化時抓的實例比對，
+					-- 改用名稱判斷（屬性讀取不是 namecall，hook 內安全）。
+					local okName, remoteName = pcall(function()
+						return self.Name
+					end)
+					if okName then
+						if remoteName == "Entity_ChangeTargetingMode" then
+							pcall(NamecallHandlers.FireServer.Targeting, { ... })
+						elseif remoteName == "SetAutoSkip" then
+							pcall(NamecallHandlers.FireServer.AutoSkip, { ... })
+						end
+					end
+				end
+			end
+			return oldNamecall(self, ...)
+		end
+
+		-- 針對手機端執行器（Delta / Codex / Arceus / Vega）建立 Hook。
+		local finalHook = hookFunc
+		local executorName = "Unknown"
+		local isMobileExecutor = false
+
+		if identifyexecutor then
+			local ok, name = pcall(identifyexecutor)
+			if ok and type(name) == "string" then
+				executorName = name
+				local lowerName = name:lower()
+				if lowerName:find("delta") or lowerName:find("codex") or lowerName:find("arceus") or lowerName:find("vega") then
+					isMobileExecutor = true
+				end
+			end
+		end
+
+		if not isMobileExecutor and newcclosure then
+			finalHook = newcclosure(hookFunc)
+		end
+
+		oldNamecall = hookmetamethod(game, "__namecall", finalHook)
+
+		Ext.log("info", string.format("[GTD Tracker] __namecall Hook OK | Executor: %s | MobilePath: %s", executorName, tostring(isMobileExecutor)))
+
+		-- 函式式呼叫路徑：遊戲用 pcall(RemoteFunction.InvokeServer, rf, ...)，需 hookfunction 才攔得到
+		if hookfunction then
+			local okHook, errHook = pcall(function()
+				local rfClass = Instance.new("RemoteFunction")
+				local invokeHook = function(self, ...)
+					return dispatch(oldInvoke, self, ...)
+				end
+				if not isMobileExecutor and newcclosure then
+					invokeHook = newcclosure(invokeHook)
+				end
+				oldInvoke = hookfunction(rfClass.InvokeServer, invokeHook)
+				rfClass:Destroy()
+			end)
+			Ext.log("info", "[GTD Tracker] InvokeServer hookfunction:", okHook and "OK" or tostring(errHook))
+		end
+
+		-- === 建立塔能力索引（花園塔防：能力資料內嵌於 GTD_ABILITY_DATA，免 require 全部單位設定，避免 WSA 閃退）===
+		local abiCount = 0
+		for unitId in pairs(GTD_ABILITY_DATA) do
+			towersWithAbility[unitId] = { unitId }
+			abiCount += 1
+		end
+		Ext.log("info", string.format("[GTD Tracker] Tower ability index built (%d units)", abiCount))
+	end)
+
+	-- （花園塔防放置不帶 unique/突變，無 NTD 的 currentPlrData.Items.Towers；已移除舊的本地突變讀取）
+
+	task.defer(function()
+		if not ok then
+			Ext.log("warn", "[GTD Tracker] Init failed:", err)
+			addLog(T("logInitFailed"), Theme.Error)
+			return
+		end
+
+		updateInfoLabel()
+
+		addLog(T("logWaitReady"), Color3.fromRGB(255, 200, 100))
+		addLog(T("logFlow"), Color3.fromRGB(180, 180, 255))
+
+		-- 花園塔防：用 workspace.GameStartTime 屬性當「遊戲開始」訊號（取代 NTD 的 GameRunning 值）
+		local function onGameStart()
+			if isGameRunning then
+				return
+			end
+			local gst = Ext.WA("GameStartTime")
+			if type(gst) ~= "number" or gst <= 0 then
+				return
+			end
+			startGameTimer(gameSettings.mapId)
+			task.spawn(function()
+				addLog(T("logDiffStart"):format(gameSettings.difficulty), Color3.fromRGB(100, 255, 100))
+			end)
+		end
+		Ext.WAChanged("GameStartTime"):Connect(onGameStart)
+		onGameStart() -- 腳本中途載入：若遊戲已開始，立即起算
+
+		-- 遊戲結束：偵測 GameGui.Screen.Middle.GameEnd 顯示（取代 GameRunning=false）
+		task.spawn(function()
+			local pg = Players.LocalPlayer:WaitForChild("PlayerGui")
+			local gameGui = pg:WaitForChild("GameGui", 30)
+			local screen = gameGui and gameGui:WaitForChild("Screen", 10)
+			local middle = screen and screen:WaitForChild("Middle", 10)
+			local gameEnd = middle and middle:WaitForChild("GameEnd", 30)
+			if not gameEnd then
+				return
+			end
+			local function onEnd()
+				if gameEnd.Visible and isGameRunning then
+					local endElapsed = getElapsed()
+					gameEndElapsed = endElapsed
+					isGameRunning = false
+					gameStartTime = nil
+					diffVoteLogged = nil -- 下一局的難度投票重新記錄
+					stopAbilityRemoteTriggers()
+					addLog(
+						T("logGameEnd"):format(math.floor(endElapsed / 60), math.floor(endElapsed % 60), endElapsed),
+						Color3.fromRGB(255, 255, 100)
+					)
+				end
+			end
+			gameEnd:GetPropertyChangedSignal("Visible"):Connect(onEnd)
+			onEnd()
+		end)
+
+		-- 啟動升級偵測（監看 .Level 增量；本 defer 為 elevated，故其 task.spawn 可碰 UI）
+		StartLevelWatcher()
+
+		addLog(
+			T("logStarted"):format(gameSettings.mapId, gameSettings.difficulty, gameSettings.modifier),
+			Color3.fromRGB(100, 255, 100)
+		)
+		Ext.log("info", "[GTD Tracker] Init complete")
+	end)
+end
+
+-- ============================================================
+-- Heartbeat 主迴圈：能力掃描 + 進度條更新
+-- ============================================================
+local abiScanTimer = 0
+local abiUpdateTimer = 0
+
+RunService.Heartbeat:Connect(function(dt)
+	flushHookTaskQueue()
+	processPendingPlacements() -- 綁定放置塔 id + 記錄日誌（此處為 elevated capability）
+
+	-- 遊戲時間時鐘前進（含速度倍率）：能力冷卻以遊戲時間計，x2/x3 下冷卻較快就緒
+	abiGameClock = abiGameClock + dt * (lastDetectedSpeed > 0 and lastDetectedSpeed or 1)
+
+	-- === 1. 掃描器（每 0.5 秒）===
+	abiScanTimer = abiScanTimer + dt
+	if abiScanTimer >= 0.5 then
+		abiScanTimer = 0
+
+		-- 花園塔防：塔在 workspace.Map.Entities（非 NTD 的 Map.Towers），entity 以 unit_id 命名、
+		-- 帶 ID 屬性 = gameId。gameId 直接從 ID 屬性綁，不靠 NTD 的 place-hook 名稱配對。
+		local Entities = Ext.GetEntities(0) or EntitiesFolder
+		if not (Entities and Entities.Parent) then
+			Entities = Ext.GetEntities(0)
+		end
+
+		if Entities then
+			local seen = {}
+
+			for _, child in ipairs(Entities:GetChildren()) do
+				local unitId = child.Name
+				-- 先檢查便宜的 OwnedIndicator，再惰性解析能力（未知塔會 require 一次其單位設定）
+				if child:FindFirstChild("OwnedIndicator") and ensureAbilityData(unitId) then
+					seen[child] = true
+					if not abiLiveTowers[child] then
+						local order = abiNextOrder
+						abiNextOrder = abiNextOrder + 1
+						local gid = child:GetAttribute("ID")
+						local info = {
+							name = unitId,
+							order = order,
+							abilityKeys = towersWithAbility[unitId] or { unitId },
+							gameId = (type(gid) == "number") and gid or nil,
+							cooldowns = {},
+						}
+						abiLiveTowers[child] = info
+
+						-- 放置初始冷卻：與遊戲一致——非 ReadyOnSummon 的能力，塔一出現（放置）就先進入
+						-- 滿冷卻，倒數完成後才可觸發。ReadyOnSummon=true 的（firework_billy/stem_beam）維持一出現即就緒。
+						-- 用 abiGameClock 當起點 → getAbilityRemaining 回傳滿冷卻並隨遊戲時間倒數。
+						for _, abilityKey in ipairs(info.abilityKeys) do
+							local data = GTD_ABILITY_DATA[abilityKey]
+							if not (data and data.ReadyOnSummon) then
+								info.cooldowns[abilityKey] = abiGameClock
+							end
+						end
+
+						if info.gameId then
+							abiModelByGameId[info.gameId] = child
+							if abiGameIdCooldownHint[info.gameId] then
+								-- 實際發動記錄（remote-spy 抓到的觸發時間）較準，覆寫上面的初始冷卻
+								for k, t0 in pairs(abiGameIdCooldownHint[info.gameId]) do
+									info.cooldowns[k] = t0
+								end
+								abiGameIdCooldownHint[info.gameId] = nil
+							end
+						end
+
+						if not abilityFrame.Visible then
+							positionAbilityFrame()
+							abilityFrame.Visible = true
+						end
+						buildAbilityCard(child)
+					elseif not abiLiveTowers[child].gameId then
+						-- entity 剛生成時 ID 屬性可能略晚才設，補綁
+						local gid = child:GetAttribute("ID")
+						if type(gid) == "number" then
+							abiBindGameId(child, gid)
+						end
+					end
+				end
+			end
+
+			local toRemove = {}
+			for model in pairs(abiLiveTowers) do
+				if model.Parent == nil or not seen[model] then
+					table.insert(toRemove, model)
+				end
+			end
+			for _, model in ipairs(toRemove) do
+				local info = abiLiveTowers[model]
+				if info and info.gameId then
+					abiModelByGameId[info.gameId] = nil
+				end
+				removeAbilityCard(model)
+				abiLiveTowers[model] = nil
+			end
+		else
+			local toRemove = {}
+			for model in pairs(abiLiveTowers) do
+				if model.Parent == nil then
+					table.insert(toRemove, model)
+				end
+			end
+			for _, model in ipairs(toRemove) do
+				local info = abiLiveTowers[model]
+				if info and info.gameId then
+					abiModelByGameId[info.gameId] = nil
+				end
+				removeAbilityCard(model)
+				abiLiveTowers[model] = nil
+			end
+		end
+	end
+
+	-- === 2. 進度條更新（每 0.1 秒）===
+	abiUpdateTimer = abiUpdateTimer + dt
+	if abiUpdateTimer < 0.1 then
+		return
+	end
+	abiUpdateTimer = 0
+
+	for model, info in pairs(abiLiveTowers) do
+		local card = abiTowerCards[model]
+		if not card then
+			continue
+		end
+		local hasId = info.gameId ~= nil
+		local canUseAbility = isGameRunning and hasId
+
+		for _, w in ipairs(card.widgets) do
+			local t0 = info.cooldowns[w.key]
+
+			if not t0 then
+				w.barFill.Size = UDim2.new(1, 0, 1, 0)
+				w.barFill.BackgroundColor3 = canUseAbility and Theme.Success or Theme.SurfaceHighlight
+				w.barText.Text = canUseAbility and T("abilityReady") or T("abilityWaitId")
+				w.fireBtn.TextColor3 = canUseAbility and Theme.Text or Theme.TextDim
+				if canUseAbility and w.autoState.enabled then
+					info.cooldowns[w.key] = abiGameClock - w.cd - 1
+				end
+				continue
+			end
+
+			local elapsed = abiGameClock - t0
+			local remaining = math.max(0, w.cd - elapsed)
+			local fillPct = math.min(elapsed / w.cd, 1)
+				-- 顯示換算成真實秒數（÷ 當前速度），讓倒數貼近實際牆鐘時間
+				local dispRemaining = remaining / (lastDetectedSpeed > 0 and lastDetectedSpeed or 1)
+
+			w.barFill.Size = UDim2.new(fillPct, 0, 1, 0)
+			w.barFill.BackgroundColor3 = remaining > 0 and Theme.Accent or Theme.Success
+			w.barText.Text = remaining > 0 and T("abilityTimerFmt"):format(dispRemaining) or T("abilityReady")
+
+			local canFire = canUseAbility and remaining == 0
+			w.fireBtn.TextColor3 = canFire and Theme.Text or Theme.TextDim
+
+			if
+				canUseAbility
+				and w.autoState.enabled
+				and remaining == 0
+				and elapsed >= w.cd + 0.5
+				and w.autoFiredAt ~= t0
+			then
+				if invokeTowerAbilitySafely(model, w.key, w.cd) then
+					w.autoFiredAt = t0
+				end
+			end
+		end
+	end
+end)
+
+-- ============================================================
+
+InitTracker()
